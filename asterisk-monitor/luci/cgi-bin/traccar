@@ -1,0 +1,31 @@
+#!/bin/sh
+
+# CGI redirect to Traccar web interface
+# Opens in full window (escapes LuCI iframe)
+
+cat <<'EOF'
+Content-Type: text/html
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Traccar</title>
+<script>top.location.href='http://192.168.1.1:8082';</script>
+<style>
+body { background: #0f0f1a; color: #e8e8f0; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+.card { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 2rem; text-align: center; }
+a { color: #4f8cff; text-decoration: none; font-size: 1.2rem; }
+p { color: #8888a0; }
+.card h2 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="card">
+<h2>📍 Traccar</h2>
+<p>Перенаправление...</p>
+<noscript><a href="http://192.168.1.1:8082">Открыть Traccar →</a></noscript>
+</div>
+</body>
+</html>
+EOF
