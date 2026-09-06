@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ru" data-bs-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asterisk Monitor - Настройки</title>
+<link rel="stylesheet" href="/static/cascade.css">
+<style>
+  body { background: #0f0f1a; color: #e8e8f0; }
+  .navbar { background: linear-gradient(135deg, #1a1a2e, #16213e); border-bottom: 1px solid #2a2a4a; padding: 0.5rem 1rem; }
+  .navbar-brand { font-weight: 700; font-size: 1.2rem; color: #4f8cff !important; }
+  .card { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; margin-bottom: 1rem; }
+  .card-header { border-bottom: 1px solid #2a2a4a; padding: 0.75rem 1.25rem; font-weight: 600; }
+  .card-body { padding: 1.25rem; }
+  .form-group { margin-bottom: 1rem; }
+  .form-group label { display: block; color: #8888a0; font-size: 0.85rem; margin-bottom: 0.4rem; }
+  .form-control { background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 0.6rem 1rem; color: #e8e8f0; width: 100%; }
+  .form-control:focus { border-color: #4f8cff; }
+  .alert { border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; }
+  .alert-success { background: rgba(46,204,113,0.15); border: 1px solid rgba(46,204,113,0.3); color: #2ecc71; }
+  .alert-danger { background: rgba(231,76,60,0.15); border: 1px solid rgba(231,76,60,0.3); color: #e74c3c; }
+</style>
+</head>
+<body>
+<nav class="navbar">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="/dashboard">📞 Asterisk Monitor</a>
+    <div style="display:flex;gap:0.5rem;align-items:center">
+      <a href="http://192.168.1.1/cgi-bin/luci" target="_blank" class="cbi-button cbi-button-action" style="text-decoration:none;font-size:0.85rem">🏠 OpenWrt</a>
+      <a href="/dashboard" class="cbi-button cbi-button-apply" style="text-decoration:none">← Назад</a>
+    </div>
+  </div>
+</nav>
+<div class="container-fluid" style="padding:1rem;max-width:600px;margin:0 auto">
+  <div class="card">
+    <div class="card-header">⚙️ Настройки</div>
+    <div class="card-body">
+      <div id="message"></div>
+
+      <div class="form-group">
+        <label>Текущий логин</label>
+        <input type="text" class="form-control" id="currentUsername" value="{{ username }}" readonly>
+      </div>
+
+      <h4 style="color:#8888a0;font-size:0.9rem;margin:1.5rem 0 1rem">Смена пароля</h4>
+      <div class="form-group">
+        <label>Текущий пароль</label>
+        <input type="password" class="form-control" id="currentPassword">
+      </div>
+      <div class="form-group">
+        <label>Новый пароль</label>
+        <input type="password" class="form-control" id="newPassword">
+      </div>
+      <div class="form-group">
+        <label>Подтверждение</label>
+        <input type="password" class="form-control" id="confirmPassword">
+      </div>
+      <button class="cbi-button cbi-button-apply" onclick="changePassword()">Сменить пароль</button>
+
+      <hr style="border-color:#2a2a4a;margin:1.5rem 0">
+      <button class="cbi-button cbi-button-apply" onclick="location.href='/logout'">🚪 Выйти</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function showMessage(text, type) {
+  const el = document.getElementById('message');
+  el.innerHTML = `<div class="alert alert-${type}">${text}</div>`;
+  setTimeout(() => el.innerHTML = '', 5000);
+}
+
+function changePassword() {
+  const current = document.getElementById('currentPassword').value;
+  const newPw = document.getElementById('newPassword').value;
+  const confirm = document.getElementById('confirmPassword').value;
+  if (!current || !newPw) return showMessage('Заполните все поля', 'danger');
+  if (newPw !== confirm) return showMessage('Пароли не совпадают', 'danger');
+  if (newPw.length < 4) return showMessage('Минимум 4 символа', 'danger');
+  
+  fetch('/api/change-password', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({current_password: current, new_password: newPw, confirm_password: confirm})
+  }).then(r=>r.json()).then(d => {
+    if (d.success) showMessage(d.message, 'success');
+    else showMessage(d.error, 'danger');
+  });
+}
+</script>
+</body>
+</html>

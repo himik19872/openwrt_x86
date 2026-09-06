@@ -1,0 +1,19 @@
+{
+	"admin/services/asterisk-monitor": {
+		"title": "Asterisk Monitor",
+		"order": 97,
+		"action": {
+			"type": "firstchild",
+			"recurse": true
+		}
+	},
+
+	"admin/services/asterisk-monitor/dashboard": {
+		"title": "📞 Панель управления",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "asterisk-monitor"
+		}
+	}
+}

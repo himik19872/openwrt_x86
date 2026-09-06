@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="ru" data-bs-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asterisk Monitor - OpenWrt</title>
+<link rel="stylesheet" href="/static/cascade.css">
+<style>
+  body { background: var(--bg-dark, #0f0f1a); color: var(--text-primary, #e8e8f0); font-family: 'Segoe UI', system-ui, sans-serif; }
+  .navbar { background: linear-gradient(135deg, #1a1a2e, #16213e); border-bottom: 1px solid var(--card-border, #2a2a4a); padding: 0.5rem 1rem; }
+  .navbar-brand { font-weight: 700; font-size: 1.2rem; color: #4f8cff !important; }
+  .card { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.3); margin-bottom: 1rem; }
+  .card-header { background: linear-gradient(90deg, rgba(79,140,255,0.1), transparent); border-bottom: 1px solid #2a2a4a; padding: 0.75rem 1.25rem; font-weight: 600; }
+  .table { margin-bottom: 0; color: #e8e8f0; font-size: 0.9rem; }
+  .table thead th { background: rgba(79,140,255,0.08); border-bottom: 2px solid #2a2a4a; color: #8888a0; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; padding: 0.75rem 1rem; }
+  .table tbody td { padding: 0.7rem 1rem; vertical-align: middle; border-color: rgba(255,255,255,0.05); }
+  .table tbody tr:hover { background: rgba(79,140,255,0.05); }
+  .stats-bar { display: flex; gap: 1rem; align-items: center; }
+  .stat-item { background: rgba(255,255,255,0.05); border-radius: 8px; padding: 0.35rem 1rem; font-size: 0.9rem; }
+  .stat-item .num { font-weight: 700; font-size: 1.1rem; }
+  .stat-item.online .num { color: #2ecc71; }
+  .stat-item.offline .num { color: #e74c3c; }
+  .stat-item.total .num { color: #4f8cff; }
+  .status-badge { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.75rem; border-radius: 20px; font-weight: 600; font-size: 0.78rem; }
+  .status-badge.online { background: rgba(46,204,113,0.15); color: #2ecc71; }
+  .status-badge.online .dot { width: 7px; height: 7px; border-radius: 50%; background: #2ecc71; display: inline-block; animation: pulse 2s infinite; }
+  .status-badge.offline { background: rgba(231,76,60,0.15); color: #e74c3c; }
+  .status-badge.offline .dot { width: 7px; height: 7px; border-radius: 50%; background: #e74c3c; display: inline-block; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .peer-name { font-weight: 600; font-size: 1rem; cursor: pointer; }
+  .peer-name:hover { color: #4f8cff; }
+  .peer-host { font-family: monospace; font-size: 0.85rem; color: #8888a0; }
+  .device-badge { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.6rem; border-radius: 20px; font-size: 0.78rem; }
+  .device-badge.panel { background: rgba(230,126,34,0.2); color: #e67e22; }
+  .device-badge.apartment { background: rgba(46,204,113,0.2); color: #2ecc71; }
+  .device-badge.other { background: rgba(136,136,160,0.2); color: #8888a0; }
+  .cbi-button { margin: 0 2px; }
+  .latency { font-family: monospace; font-size: 0.85rem; color: #8888a0; }
+  .nav-tabs { border-bottom: 1px solid #2a2a4a; }
+  .nav-tabs .nav-link { color: #8888a0; border: none; padding: 0.5rem 1rem; }
+  .nav-tabs .nav-link.active { color: #4f8cff; border-bottom: 2px solid #4f8cff; background: transparent; }
+  .action-btn { background: none; border: none; color: #8888a0; cursor: pointer; padding: 0.2rem 0.4rem; font-size: 1rem; }
+  .action-btn:hover { color: #4f8cff; }
+  .action-btn.danger:hover { color: #e74c3c; }
+  .recording-player { width: 100%; margin: 0.5rem 0; }
+  .recording-item { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap; }
+  .recording-info { flex: 1; min-width: 150px; }
+  .recording-info .date { color: #8888a0; font-size: 0.85rem; }
+  .recording-info .caller { font-weight: 600; font-size: 1rem; }
+  .recording-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .recording-actions audio { height: 36px; min-width: 180px; border-radius: 4px; background: #0f0f1a; }
+  .play-btn { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.35rem 1rem; background: #2ecc71; color: #fff; border: none; border-radius: 20px; cursor: pointer; font-weight: 600; font-size: 0.85rem; }
+  .play-btn:hover { background: #27ae60; }
+  .play-btn.playing { background: #e74c3c; }
+  .recording-size { color: #8888a0; font-size: 0.85rem; white-space: nowrap; }
+  .empty-state { text-align: center; padding: 2rem; color: #8888a0; }
+  .empty-state .icon { font-size: 3rem; margin-bottom: 1rem; }
+  /* Modal styles */
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
+  .modal-overlay.active { display: flex; }
+  .modal { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; width: 90%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
+  .modal-header { padding: 1rem 1.25rem; border-bottom: 1px solid #2a2a4a; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .modal-close { background: none; border: none; color: #8888a0; font-size: 1.5rem; cursor: pointer; }
+  .modal-close:hover { color: #e74c3c; }
+  .modal-body { padding: 1.25rem; }
+  .modal-footer { padding: 1rem 1.25rem; border-top: 1px solid #2a2a4a; display: flex; gap: 0.5rem; justify-content: flex-end; }
+  .form-group { margin-bottom: 1rem; }
+  .form-group label { display: block; color: #8888a0; font-size: 0.85rem; margin-bottom: 0.4rem; }
+  .form-control { background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 0.6rem 1rem; color: #e8e8f0; width: 100%; box-sizing: border-box; }
+  .form-control:focus { border-color: #4f8cff; outline: none; }
+  select.form-control { cursor: pointer; }
+  .btn { padding: 0.5rem 1.2rem; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+  .btn-primary { background: #4f8cff; color: #fff; }
+  .btn-primary:hover { background: #3a7bef; }
+  .btn-secondary { background: #2a2a4a; color: #8888a0; }
+  .btn-secondary:hover { background: #3a3a5a; }
+  .btn-danger { background: #c0392b; color: #fff; }
+  .btn-danger:hover { background: #e74c3c; }
+  .alert { border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.9rem; }
+  .alert-success { background: rgba(46,204,113,0.15); border: 1px solid rgba(46,204,113,0.3); color: #2ecc71; }
+  .alert-danger { background: rgba(231,76,60,0.15); border: 1px solid rgba(231,76,60,0.3); color: #e74c3c; }
+  @media (prefers-color-scheme: dark) { body { background: #0f0f1a; } }
+</style>
+</head>
+<body>
+<nav class="navbar">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="/dashboard">📞 Asterisk Monitor</a>
+    <div class="stats-bar" id="statsBar">
+      <span class="stat-item online"><span class="num" id="onlineCount">0</span> Онлайн</span>
+      <span class="stat-item offline"><span class="num" id="offlineCount">0</span> Офлайн</span>
+      <span class="stat-item total"><span class="num" id="totalCount">0</span> Всего</span>
+    </div>
+    <div style="display:flex;gap:0.5rem;align-items:center">
+      <a href="http://192.168.1.1/cgi-bin/luci" target="_blank" class="cbi-button cbi-button-action" style="text-decoration:none;font-size:0.85rem">🏠 OpenWrt</a>
+      <a href="/settings" class="cbi-button cbi-button-apply" style="text-decoration:none">⚙️</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid" style="padding:1rem">
+  <ul class="nav nav-tabs" id="tabNav">
+    <li class="nav-item"><a class="nav-link active" id="tabPeers" href="#">📋 Пиры</a></li>
+    <li class="nav-item"><a class="nav-link" id="tabActions" href="#">⚡ Действия</a></li>
+    <li class="nav-item"><a class="nav-link" id="tabRecordings" href="#">🎙 Записи</a></li>
+  </ul>
+
+  <div id="tabPeersContent" class="card" style="margin-top:1rem">
+    <div class="card-header">
+      <span>SIP Пиры</span>
+      <span style="margin-left:auto">
+        <span id="lastUpdate" style="font-size:0.8rem;color:#8888a0;margin-right:1rem"></span>
+        <button class="cbi-button cbi-button-action" onclick="showAddModal()" title="Добавить пир">➕</button>
+        <button class="cbi-button cbi-button-apply" onclick="location.reload()">🔄</button>
+      </span>
+    </div>
+    <div style="padding:0">
+      <table class="table" id="peersTable">
+        <thead><tr>
+          <th>Имя</th><th>Тип</th><th>IP</th><th>Статус</th><th>Задержка</th><th style="width:70px">Действия</th>
+        </tr></thead>
+        <tbody id="peersBody">
+          <tr><td colspan="6" style="text-align:center;color:#8888a0">Загрузка...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="tabActionsContent" class="card" style="margin-top:1rem;display:none">
+    <div class="card-header">⚡ Быстрые действия</div>
+    <div class="card-body" style="padding:1rem">
+      <button class="cbi-button cbi-button-apply" onclick="reloadAsterisk()">🔄 Перезагрузить конфиг</button>
+      <button class="cbi-button cbi-button-apply" onclick="openDoor(101)">🚪 Открыть подъезд 1</button>
+      <button class="cbi-button cbi-button-apply" onclick="openDoor(100)">🚪 Открыть подъезд 2</button>
+      <button class="cbi-button cbi-button-action" onclick="showAddModal()">➕ Добавить SIP пир</button>
+    </div>
+  </div>
+
+  <div id="tabRecordingsContent" class="card" style="margin-top:1rem;display:none">
+    <div class="card-header">
+      <span>🎙 Записи звонков</span>
+      <span style="margin-left:auto">
+        <span id="recordingsCount" style="font-size:0.8rem;color:#8888a0;margin-right:1rem"></span>
+        <button class="cbi-button cbi-button-apply" onclick="loadRecordings()">🔄</button>
+      </span>
+    </div>
+    <div id="recordingsList" style="padding:1rem">
+      <div class="empty-state"><div class="icon">🎙</div><div>Загрузка записей...</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal-overlay" id="peerModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span id="modalTitle">Добавить SIP пир</span>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="modalMessage"></div>
+      <div class="form-group">
+        <label>Номер (имя)</label>
+        <input type="text" class="form-control" id="peerName" placeholder="101" maxlength="10">
+      </div>
+      <div class="form-group">
+        <label>Пароль (secret)</label>
+        <input type="text" class="form-control" id="peerSecret" placeholder="****">
+      </div>
+      <div class="form-group">
+        <label>Тип устройства</label>
+        <select class="form-control" id="peerDeviceType">
+          <option value="beward">🚪 Beward (панель)</option>
+          <option value="dahua">🚪 Dahua (панель)</option>
+          <option value="rubitek">🚪 Rubitek (панель)</option>
+          <option value="openipc">🚪 OpenIPC (панель)</option>
+          <option value="apartment">🏠 Квартира</option>
+          <option value="other">📱 Другое</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>CallerID (отображаемое имя)</label>
+        <input type="text" class="form-control" id="peerCallerid" placeholder="Apartment 111">
+      </div>
+      <div class="form-group">
+        <label>Host (оставьте dynamic для регистрации)</label>
+        <input type="text" class="form-control" id="peerHost" placeholder="dynamic">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Отмена</button>
+      <button class="btn btn-primary" id="modalSaveBtn" onclick="savePeer()">Сохранить</button>
+      <button class="btn btn-danger" id="modalDeleteBtn" onclick="deletePeer()" style="display:none">Удалить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let peersCache = [];
+let updateInterval = null;
+let editingPeerName = null;
+
+function updatePeers() {
+  fetch('/api/status').then(r=>r.json()).then(data => {
+    if (data.peers) {
+      peersCache = data.peers;
+      document.getElementById('onlineCount').textContent = data.online;
+      document.getElementById('offlineCount').textContent = data.offline;
+      document.getElementById('totalCount').textContent = data.total;
+      document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+      
+      const tbody = document.getElementById('peersBody');
+      tbody.innerHTML = '';
+      data.peers.forEach(p => {
+        const statusClass = p.is_online ? 'online' : 'offline';
+        const statusText = p.is_online ? (p.latency ? `OK (${p.latency}ms)` : 'OK') : 'OFFLINE';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><span class="peer-name" onclick="editPeer('${p.name}')">${p.name}</span></td>
+          <td><span class="device-badge ${p.device_type === 'apartment' ? 'apartment' : 'panel'}">${p.device_label || '📱'}</span></td>
+          <td><span class="peer-host">${p.host}</span></td>
+          <td><span class="status-badge ${statusClass}"><span class="dot"></span>${statusText}</span></td>
+          <td class="latency">${p.latency ? p.latency + ' ms' : '—'}</td>
+          <td>
+            <button class="action-btn" onclick="editPeer('${p.name}')" title="Редактировать">✏️</button>
+            <button class="action-btn danger" onclick="deletePeer('${p.name}')" title="Удалить">🗑️</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+  }).catch(() => {});
+}
+
+function reloadAsterisk() {
+  fetch('/api/reload').then(r=>r.json()).then(d => alert(d.message || d.error));
+}
+
+function openDoor(panel) {
+  fetch(`/api/door/${panel}`).then(r=>r.json()).then(d => alert(d.message || d.error));
+}
+
+// Recordings
+function loadRecordings() {
+  fetch('/api/recordings').then(r=>r.json()).then(data => {
+    const list = document.getElementById('recordingsList');
+    const recs = data.recordings || [];
+    document.getElementById('recordingsCount').textContent = recs.length + ' записей';
+    
+    if (recs.length === 0) {
+      list.innerHTML = '<div class="empty-state"><div class="icon">🎙</div><div>Нет записей звонков</div><p style="color:#8888a0;font-size:0.9rem">Записи появятся после первого звонка</p></div>';
+      return;
+    }
+    
+    let html = '';
+    recs.forEach(r => {
+      const statusColor = r.disposition === 'ANSWERED' ? '#2ecc71' : (r.disposition === 'NO ANSWER' ? '#e74c3c' : '#8888a0');
+      const callerStr = (r.src && r.src !== '?') ? r.src : r.filename.replace(/\.wav$/,'').slice(-8);
+      const calleeStr = (r.dst && r.dst !== '?') ? r.dst : '—';
+      const fid = r.filename.replace(/[^a-zA-Z0-9]/g, '_');
+      html += `
+        <div class="recording-item">
+          <div class="recording-info">
+            <div class="caller">📞 ${callerStr} → ${calleeStr} <span style="color:${statusColor};font-size:0.8rem">${r.disposition !== '?' ? r.disposition : ''}</span></div>
+            <div class="date">📅 ${r.date} · ⏱ ${r.duration_str} · ${r.size_str}</div>
+          </div>
+          <div class="recording-actions">
+            <button class="play-btn" onclick="togglePlay('${fid}','${encodeURIComponent(r.filename)}')" id="btn_${fid}">▶ Воспр.</button>
+            <div id="player_${fid}" style="display:inline-flex;align-items:center"></div>
+            <a href="/api/recordings/play/${encodeURIComponent(r.filename)}" download="${r.filename}" class="cbi-button cbi-button-action" style="text-decoration:none;font-size:0.8rem" title="Скачать">⬇</a>
+            <button class="action-btn danger" onclick="deleteRecording('${r.filename}')" title="Удалить">🗑️</button>
+          </div>
+        </div>
+      `;
+    });
+    list.innerHTML = html;
+  }).catch(e => {
+    document.getElementById('recordingsList').innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div>Ошибка загрузки записей</div></div>';
+  });
+}
+
+function togglePlay(fid, urlEncoded) {
+  const playerDiv = document.getElementById('player_' + fid);
+  const btn = document.getElementById('btn_' + fid);
+  
+  if (playerDiv.dataset.active === '1') {
+    // Stop playback
+    if (playerDiv._audio) {
+      playerDiv._audio.pause();
+      playerDiv._audio.currentTime = 0;
+      playerDiv._audio.remove();
+    }
+    playerDiv.dataset.active = '0';
+    playerDiv.innerHTML = '';
+    btn.innerHTML = '▶ Воспр.';
+    btn.classList.remove('playing');
+  } else {
+    // Start playback - create audio element fresh
+    playerDiv.innerHTML = '';
+    const audio = document.createElement('audio');
+    audio.controls = true;
+    audio.preload = 'none';
+    audio.style.height = '36px';
+    audio.style.minWidth = '180px';
+    audio.style.borderRadius = '4px';
+    
+    const source = document.createElement('source');
+    source.src = '/api/recordings/play/' + urlEncoded;
+    source.type = 'audio/wav';
+    audio.appendChild(source);
+    
+    playerDiv.appendChild(audio);
+    playerDiv._audio = audio;
+    playerDiv.dataset.active = '1';
+    btn.innerHTML = '⏹ Стоп';
+    btn.classList.add('playing');
+    
+    audio.play().catch(function(e) {
+      // Autoplay might be blocked
+      playerDiv.innerHTML = '<span style="color:#e74c3c;font-size:0.85rem">Нажмите ▶ в плеере</span>';
+    });
+  }
+}
+
+function deleteRecording(filename) {
+  if (!confirm('Удалить запись ' + filename + '?')) return;
+  fetch('/api/recordings/delete/' + encodeURIComponent(filename), {method: 'POST'})
+    .then(r=>r.json()).then(d => {
+      if (d.success) loadRecordings();
+      else alert(d.error);
+    });
+}
+
+// Modal functions
+function showAddModal() {
+  editingPeerName = null;
+  document.getElementById('modalTitle').textContent = '➕ Добавить SIP пир';
+  document.getElementById('peerName').value = '';
+  document.getElementById('peerName').readOnly = false;
+  document.getElementById('peerSecret').value = '';
+  document.getElementById('peerDeviceType').value = 'other';
+  document.getElementById('peerCallerid').value = '';
+  document.getElementById('peerHost').value = 'dynamic';
+  document.getElementById('modalDeleteBtn').style.display = 'none';
+  document.getElementById('modalMessage').innerHTML = '';
+  document.getElementById('peerModal').classList.add('active');
+}
+
+function closeModal() {
+  document.getElementById('peerModal').classList.remove('active');
+  editingPeerName = null;
+}
+
+function editPeer(name) {
+  editingPeerName = name;
+  document.getElementById('modalTitle').textContent = '✏️ Редактировать: ' + name;
+  document.getElementById('peerName').value = name;
+  document.getElementById('peerName').readOnly = true;
+  document.getElementById('modalDeleteBtn').style.display = 'inline-block';
+  document.getElementById('modalMessage').innerHTML = '';
+  document.getElementById('peerModal').classList.add('active');
+  
+  // Fetch peer details
+  fetch('/api/peers/' + encodeURIComponent(name)).then(r=>r.json()).then(p => {
+    if (p.error) { showModalError(p.error); return; }
+    document.getElementById('peerSecret').value = p.secret || '';
+    document.getElementById('peerDeviceType').value = p.device_type || 'other';
+    document.getElementById('peerCallerid').value = p.callerid || '';
+    document.getElementById('peerHost').value = p.host || 'dynamic';
+  }).catch(e => showModalError('Ошибка загрузки'));
+}
+
+function savePeer() {
+  const name = document.getElementById('peerName').value.trim();
+  const secret = document.getElementById('peerSecret').value.trim();
+  const device_type = document.getElementById('peerDeviceType').value;
+  const callerid = document.getElementById('peerCallerid').value.trim();
+  const host = document.getElementById('peerHost').value.trim() || 'dynamic';
+  
+  if (!name || !secret) {
+    showModalError('Номер и пароль обязательны');
+    return;
+  }
+  
+  document.getElementById('modalSaveBtn').disabled = true;
+  
+  if (editingPeerName) {
+    // Update existing peer
+    fetch('/api/peers/' + encodeURIComponent(editingPeerName), {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({secret, device_type, callerid, host})
+    }).then(r=>r.json()).then(d => {
+      if (d.success) {
+        showModalSuccess('Сохранено! Перезагружаю...');
+        setTimeout(() => { closeModal(); updatePeers(); }, 1000);
+      } else {
+        showModalError(d.error || 'Ошибка');
+      }
+      document.getElementById('modalSaveBtn').disabled = false;
+    });
+  } else {
+    // Add new peer
+    fetch('/api/peers', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, secret, device_type, callerid, host})
+    }).then(r=>r.json()).then(d => {
+      if (d.success) {
+        showModalSuccess('Добавлено! Перезагружаю...');
+        setTimeout(() => { closeModal(); updatePeers(); }, 1000);
+      } else {
+        showModalError(d.error || 'Ошибка');
+      }
+      document.getElementById('modalSaveBtn').disabled = false;
+    });
+  }
+}
+
+function deletePeer(name) {
+  const peerName = name || editingPeerName;
+  if (!peerName) return;
+  if (!confirm('Удалить пир ' + peerName + '?')) return;
+  
+  fetch('/api/peers/' + encodeURIComponent(peerName), {
+    method: 'DELETE'
+  }).then(r=>r.json()).then(d => {
+    if (d.success) {
+      showModalSuccess('Удалено!');
+      setTimeout(() => { closeModal(); updatePeers(); }, 1000);
+    } else {
+      showModalError(d.error || 'Ошибка');
+    }
+  });
+}
+
+function showModalSuccess(msg) {
+  document.getElementById('modalMessage').innerHTML = '<div class="alert alert-success">' + msg + '</div>';
+}
+
+function showModalError(msg) {
+  document.getElementById('modalMessage').innerHTML = '<div class="alert alert-danger">' + msg + '</div>';
+}
+
+// Tab switching
+document.getElementById('tabPeers').addEventListener('click', e => {
+  e.preventDefault();
+  document.getElementById('tabPeersContent').style.display = 'block';
+  document.getElementById('tabActionsContent').style.display = 'none';
+  document.getElementById('tabRecordingsContent').style.display = 'none';
+  document.getElementById('tabPeers').classList.add('active');
+  document.getElementById('tabActions').classList.remove('active');
+  document.getElementById('tabRecordings').classList.remove('active');
+});
+
+document.getElementById('tabActions').addEventListener('click', e => {
+  e.preventDefault();
+  document.getElementById('tabPeersContent').style.display = 'none';
+  document.getElementById('tabActionsContent').style.display = 'block';
+  document.getElementById('tabRecordingsContent').style.display = 'none';
+  document.getElementById('tabPeers').classList.remove('active');
+  document.getElementById('tabActions').classList.add('active');
+  document.getElementById('tabRecordings').classList.remove('active');
+});
+
+document.getElementById('tabRecordings').addEventListener('click', e => {
+  e.preventDefault();
+  document.getElementById('tabPeersContent').style.display = 'none';
+  document.getElementById('tabActionsContent').style.display = 'none';
+  document.getElementById('tabRecordingsContent').style.display = 'block';
+  document.getElementById('tabPeers').classList.remove('active');
+  document.getElementById('tabActions').classList.remove('active');
+  document.getElementById('tabRecordings').classList.add('active');
+  loadRecordings();
+});
+
+updatePeers();
+updateInterval = setInterval(updatePeers, 30000);
+</script>
+</body>
+</html>

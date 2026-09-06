@@ -1,0 +1,19 @@
+{
+	"admin/services/go2rtc": {
+		"title": "go2rtc",
+		"order": 96,
+		"action": {
+			"type": "firstchild",
+			"recurse": true
+		}
+	},
+
+	"admin/services/go2rtc/dashboard": {
+		"title": "📹 Панель управления",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "go2rtc"
+		}
+	}
+}

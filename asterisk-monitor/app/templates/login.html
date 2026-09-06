@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ru" data-bs-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asterisk Monitor - Вход</title>
+<link rel="stylesheet" href="/static/cascade.css">
+<style>
+  body { background: linear-gradient(135deg, #0f0f1a, #1a1a2e, #16213e); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .login-card { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 16px; padding: 2.5rem 2rem; width: 100%; max-width: 400px; box-shadow: 0 8px 40px rgba(0,0,0,0.4); }
+  .login-card h1 { font-size: 1.5rem; font-weight: 700; color: #e8e8f0; text-align: center; margin-bottom: 0.5rem; }
+  .login-card p.subtitle { color: #8888a0; text-align: center; margin-bottom: 1.75rem; }
+  .form-control { background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 10px; padding: 0.75rem 1rem; color: #e8e8f0; }
+  .form-control:focus { border-color: #4f8cff; box-shadow: 0 0 0 3px rgba(79,140,255,0.2); }
+  .btn-login { background: linear-gradient(135deg, #4f8cff, #3b6fcc); border: none; border-radius: 10px; padding: 0.75rem; font-weight: 600; width: 100%; color: #fff; cursor: pointer; }
+  .btn-login:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(79,140,255,0.3); }
+  .alert { border-radius: 10px; padding: 0.75rem 1rem; margin-bottom: 1.25rem; }
+  .alert-danger { background: rgba(231,76,60,0.15); border: 1px solid rgba(231,76,60,0.3); color: #e74c3c; }
+</style>
+</head>
+<body>
+<div class="login-card">
+  <h1>📞 Asterisk Monitor</h1>
+  <p class="subtitle">Вход в систему управления</p>
+  {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+  <form method="post">
+    <div class="form-group" style="margin-bottom:1.25rem">
+      <label style="color:#8888a0;font-size:0.85rem;margin-bottom:0.4rem">Имя пользователя</label>
+      <input type="text" name="username" class="form-control" required>
+    </div>
+    <div class="form-group" style="margin-bottom:1.5rem">
+      <label style="color:#8888a0;font-size:0.85rem;margin-bottom:0.4rem">Пароль</label>
+      <input type="password" name="password" class="form-control" required>
+    </div>
+    <button type="submit" class="btn-login">Войти</button>
+  </form>
+  <div style="text-align:center;margin-top:1.5rem;color:#555;font-size:0.8rem">OpenWrt Asterisk Monitor</div>
+</div>
+</body>
+</html>
