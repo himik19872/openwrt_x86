@@ -45,7 +45,11 @@ sh common/install.sh           # nginx + LuCI-карточки + фикс hairpi
 ```
 Интернет ──▶ роутер (fw4/nftables)
               │
-              ├─ 443  nginx ──▶ по server_name: NVR / камера / HA / Traccar / UPS
+              ├─ 443  nginx ── по server_name:
+              │        ├ <domain>       → LuCI на роутере
+              │        ├ nvr.<domain>   → 192.168.1.51 (NVR)
+              │        ├ video.<domain> → 192.168.1.61 (камера)
+              │        └ ho.<domain>    → 192.168.1.30 (Home Assistant)
               ├─ 8443 nginx ──▶ Home Assistant (HTTPS)
               ├─ 8445 nginx ──▶ Traccar
               ├─ 51820/udp    WireGuard

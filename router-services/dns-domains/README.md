@@ -5,11 +5,15 @@
 ## Как работает
 
 ```
-Интернет ──▶ <wan-ip>:443 ──▶ nginx (server_name) ──▶ 192.168.1.51:443  (NVR)
-                                                     ├▶ 192.168.1.61:80   (камера)
-                                                     ├▶ 192.168.1.30:8123 (HA)
+Интернет ──▶ <wan-ip>:443 ──▶ nginx (server_name)
+                              ├▶ <domain>            → роутер (LuCI, 127.0.0.1:80)
+                              ├▶ nvr.<domain>        → 192.168.1.51:443  (NVR)
+                              ├▶ video.<domain>      → 192.168.1.61:80   (камера)
+                              └▶ ho.<domain>         → 192.168.1.30:8123 (Home Assistant)
 LAN ──▶ dnsmasq: *.domain → 192.168.1.1 ──▶ тот же nginx
 ```
+
+**Корень домена** удобно направлять на сам роутер (LuCI или портал сервисов), а устройства выносить в поддомены.
 
 - DuckDNS отдаёт **wildcard** — регистрировать каждый поддомен не нужно;
 - TLS — wildcard `*.<domain>` Let's Encrypt (DNS-01, acme.sh), автопродление по cron;
@@ -72,9 +76,10 @@ files/etc/duckdns/sites.json    → список поддоменов (прим�
   "listen_ip": "192.168.1.1",
   "local_domain": false,
   "sites": [
-    { "sub": "",      "name": "NVR",    "target": "https://192.168.1.51:443", "public": true,  "enabled": true, "ws": true },
-    { "sub": "video", "name": "Камера", "target": "http://192.168.1.61:80",   "public": true,  "enabled": true, "ws": false },
-    { "sub": "ups",   "name": "UPS",    "target": "http://127.0.0.1/cgi-bin/upsadmin", "public": false, "enabled": true }
+    { "sub": "",      "name": "Роутер (LuCI)", "target": "http://127.0.0.1",          "public": true,  "enabled": true, "ws": true },
+    { "sub": "nvr",   "name": "NVR",           "target": "https://192.168.1.51:443", "public": true,  "enabled": true, "ws": true },
+    { "sub": "video", "name": "Камера",        "target": "http://192.168.1.61:80",   "public": true,  "enabled": true, "ws": false },
+    { "sub": "ups",   "name": "UPS",           "target": "http://127.0.0.1/cgi-bin/upsadmin", "public": false, "enabled": true }
   ]
 }
 ```

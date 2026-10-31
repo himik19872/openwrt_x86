@@ -19,9 +19,9 @@ return view.extend({
 			},
 			{
 				title: 'NVR',
-				desc: 'Видеонаблюдение · himik1987.duckdns.org',
+				desc: 'Видеонаблюдение · nvr.himik1987.duckdns.org',
 				url: 'https://192.168.1.51/',
-				ext: 'https://himik1987.duckdns.org/'
+				ext: 'https://nvr.himik1987.duckdns.org/'
 			},
 			{
 				title: 'Камера',
@@ -48,7 +48,8 @@ return view.extend({
 			{
 				title: 'LuCI',
 				desc: 'Веб-интерфейс роутера',
-				url: '/cgi-bin/luci'
+				url: '/cgi-bin/luci',
+				ext: 'https://himik1987.duckdns.org/'
 			}
 		];
 
