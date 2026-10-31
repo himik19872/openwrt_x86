@@ -1,0 +1,28 @@
+#!/bin/sh
+# Отправка сообщения в Telegram: notify-tg "текст"
+S=/etc/netmon/settings.json
+[ -f "$S" ] || exit 1
+
+TOKEN=$(jq -r '.token // empty' "$S" 2>/dev/null)
+CHAT=$(jq -r '.chat_id // empty' "$S" 2>/dev/null)
+
+[ -n "$TOKEN" ] || { echo "Telegram token is not set"; exit 1; }
+[ -n "$CHAT" ] || { echo "Telegram chat_id is not set"; exit 1; }
+
+MSG=$(printf '%s' "${1:-}" | cut -c1-3900)
+[ -n "$MSG" ] || exit 1
+
+RESP=$(curl -s --max-time 15 -w '\n%{http_code}' -X POST \
+    "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+    --data-urlencode "chat_id=${CHAT}" \
+    --data-urlencode "text=${MSG}" 2>&1)
+
+CODE=$(printf '%s' "$RESP" | tail -n 1)
+BODY=$(printf '%s' "$RESP" | sed '$d')
+
+if [ "$CODE" = "200" ]; then
+    exit 0
+fi
+logger -t notify-tg "telegram error: HTTP ${CODE} ${BODY}"
+echo "$BODY"
+exit 1

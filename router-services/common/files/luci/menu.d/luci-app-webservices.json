@@ -1,0 +1,10 @@
+{
+	"admin/services/webservices": {
+		"title": "Веб-сервисы",
+		"order": 64,
+		"action": {
+			"type": "view",
+			"path": "webservices"
+		}
+	}
+}

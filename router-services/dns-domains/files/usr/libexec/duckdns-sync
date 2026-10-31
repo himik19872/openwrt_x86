@@ -1,0 +1,34 @@
+#!/bin/sh
+# /usr/libexec/duckdns-sync
+# Обновляет A-запись корневого домена в DuckDNS (wildcard *.domain наследует IP корня).
+# Использование: duckdns-sync [--force]
+
+JSON=/etc/duckdns/sites.json
+BASE=$(jq -r '.base // "himik1987.duckdns.org"' "$JSON" 2>/dev/null)
+[ -n "$BASE" ] || BASE=himik1987.duckdns.org
+SUB=${BASE%.duckdns.org}
+
+TOKEN=""
+[ -f /etc/duckdns/token ] && TOKEN=$(cat /etc/duckdns/token 2>/dev/null | tr -d '\r\n')
+if [ -z "$TOKEN" ] && [ -f /etc/acme/account.conf ]; then
+    TOKEN=$(sed -n "s/^SAVED_DuckDNS_Token='\(.*\)'$/\1/p" /etc/acme/account.conf)
+    [ -z "$TOKEN" ] && TOKEN=$(sed -n "s/^DuckDNS_Token='\(.*\)'$/\1/p" /etc/acme/account.conf)
+    [ -z "$TOKEN" ] && TOKEN=$(sed -n "s/^SAVED_DuckDNS_Token=\"\(.*\)\"$/\1/p" /etc/acme/account.conf)
+fi
+[ -n "$TOKEN" ] || { echo "no-token"; exit 1; }
+
+iface=$(ip route show default | awk '{print $5}' | head -1)
+[ -n "$iface" ] || iface=eth1
+ip=$(ip -4 addr show dev "$iface" | awk '/inet /{sub(/\/.*/,"",$2); print $2}' | head -1)
+[ -n "$ip" ] || { echo "no-ip"; exit 1; }
+
+last=""
+[ -f /tmp/duckdns-last ] && last=$(cat /tmp/duckdns-last 2>/dev/null)
+if [ "$1" != "--force" ] && [ "$ip" = "$last" ]; then
+    exit 0
+fi
+
+resp=$(curl -s -m 20 "https://www.duckdns.org/update?domains=$SUB&token=$TOKEN&ip=$ip" 2>/dev/null)
+echo "$ip" > /tmp/duckdns-last
+echo "$(date '+%F %T') ip=$ip resp=$resp" >> /var/log/duckdns.log
+echo "$resp"

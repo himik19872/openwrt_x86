@@ -1,0 +1,217 @@
+#!/bin/sh
+# /usr/libexec/duckdns-api
+# CGI API панели управления доменом himik1987.duckdns.org
+# Хранилище: /etc/duckdns/{sites.json,token}
+
+BASE_DIR=/etc/duckdns
+JSON="$BASE_DIR/sites.json"
+APPLY=/usr/libexec/duckdns-apply
+SYNC=/usr/libexec/duckdns-sync
+CERT=/etc/nginx/ssl/ha.crt
+
+# ---------- helpers ----------
+hdr() { printf 'Content-Type: application/json; charset=utf-8\nCache-Control: no-store\n\n'; }
+json_out() { hdr; printf '%s\n' "$1"; }
+hdr_json() { hdr; cat; }
+json_err() { printf 'Status: %s\nContent-Type: application/json; charset=utf-8\nCache-Control: no-store\n\n{"ok":false,"error":"%s"}\n' "$1" "$2"; exit 0; }
+
+get_wan_ip() {
+    ubus call network.interface.wan status 2>/dev/null |
+        jq -r '."ipv4-address"[0].address // empty' 2>/dev/null
+}
+
+cert_enddate() {
+    [ -f "$CERT" ] || return 0
+    openssl x509 -in "$CERT" -noout -enddate 2>/dev/null | cut -d= -f2
+}
+
+cert_sans() {
+    [ -f "$CERT" ] || { printf '[]'; return 0; }
+    openssl x509 -in "$CERT" -noout -ext subjectAltName 2>/dev/null |
+        sed -n '2,$p' | tr -d ' ' | tr ',' '\n' | sed 's/^DNS://' |
+        jq -R -s 'split("\n") | map(select(length > 0))'
+}
+
+# ---------- auth ----------
+check_auth() {
+    case "$HTTP_AUTHORIZATION" in
+        Bearer\ *)
+            if [ -s "$BASE_DIR/api.key" ] &&
+                [ "${HTTP_AUTHORIZATION#Bearer }" = "$(cat "$BASE_DIR/api.key")" ]; then
+                return 0
+            fi
+            return 1
+            ;;
+    esac
+    [ -n "$HTTP_AUTHORIZATION" ] || return 1
+    cred=$(printf '%s' "$HTTP_AUTHORIZATION" | sed 's/^Basic //')
+    decoded=$(printf '%s' "$cred" | base64 -d 2>/dev/null) || return 1
+    user=${decoded%%:*}
+    pass=${decoded#*:}
+    [ "$user" = "root" ] || return 1
+    hash=$(awk -F: '$1=="root"{print $2}' /etc/shadow)
+    case "$hash" in
+        \$6\$*) algo="-6" ;;
+        \$5\$*) algo="-5" ;;
+        \$1\$*) algo="-1" ;;
+        *) return 1 ;;
+    esac
+    salt=$(printf '%s' "$hash" | cut -d'$' -f3)
+    calc=$(openssl passwd "$algo" -salt "$salt" "$pass" 2>/dev/null)
+    [ "$calc" = "$hash" ]
+}
+
+# ---------- request parsing ----------
+ACTION=$(printf '%s' "$QUERY_STRING" | sed -n 's/.*action=\([^&]*\).*/\1/p' | head -1)
+[ -z "$ACTION" ] && ACTION=status
+
+BODY=""
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    CLEN=${CONTENT_LENGTH:-0}
+    case "$CLEN" in '' | *[!0-9]*) CLEN=0 ;; esac
+    [ "$CLEN" -gt 0 ] && BODY=$(dd bs=1 count="$CLEN" 2>/dev/null)
+fi
+
+if ! check_auth; then
+    printf 'Status: 401 Unauthorized\nWWW-Authenticate: Basic realm="dns-admin"\nContent-Type: text/plain; charset=utf-8\nCache-Control: no-store\n\n401 Unauthorized\n'
+    exit 0
+fi
+
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    case "$CONTENT_TYPE" in
+        application/json*) ;;
+        *) json_err "415 Unsupported Media Type" "application/json required" ;;
+    esac
+fi
+
+[ -f "$JSON" ] || printf '{"base":"himik1987.duckdns.org","listen_ip":"192.168.1.1","local_domain":false,"sites":[]}\n' > "$JSON"
+
+# ---------- actions ----------
+case "$ACTION" in
+status)
+    wan=$(get_wan_ip)
+    lastip=""
+    [ -f /tmp/duckdns-last ] && lastip=$(cat /tmp/duckdns-last 2>/dev/null)
+    enddate=$(cert_enddate)
+    sans=$(cert_sans)
+    token_set=false
+    [ -s "$BASE_DIR/token" ] && token_set=true
+    jq --arg wan "$wan" --arg lastip "$lastip" --arg enddate "$enddate" \
+        --argjson sans "$sans" --argjson token_set "$token_set" \
+        '{ok:true,data:{
+          base:(.base // "himik1987.duckdns.org"),
+          listen_ip:(.listen_ip // "192.168.1.1"),
+          local_domain:(.local_domain == true),
+          sites:(.sites // []),
+          wan_ip:$wan, duckdns_last_ip:$lastip, token_set:$token_set,
+          cert:{enddate:$enddate, sans:$sans}}}' "$JSON" | hdr_json
+    ;;
+
+save)
+    [ -n "$BODY" ] || json_err "400 Bad Request" "empty body"
+    printf '%s' "$BODY" | jq -e . >/dev/null 2>&1 || json_err "400 Bad Request" "invalid json"
+
+    cnt=$(printf '%s' "$BODY" | jq -r '.sites | length' 2>/dev/null)
+    case "$cnt" in '' | *[!0-9]*) json_err "400 Bad Request" "sites must be array" ;; esac
+    [ "$cnt" -le 60 ] || json_err "400 Bad Request" "too many sites (max 60)"
+
+    # валидация поддоменов и целей
+    bad=""
+    for s in $(printf '%s' "$BODY" | jq -r '.sites[].sub // ""'); do
+        [ -z "$s" ] && continue
+        case "$s" in
+            *[!a-z0-9-]* | -* | *-) bad="$s" ;;
+        esac
+        if [ ${#s} -gt 40 ]; then bad="$s"; fi
+    done
+    [ -n "$bad" ] && json_err "400 Bad Request" "invalid subdomain: $bad"
+
+    for t in $(printf '%s' "$BODY" | jq -r '.sites[].target // ""'); do
+        case "$t" in
+            http://* | https://*) ;;
+            *) bad="$t" ;;
+        esac
+        case "$t" in
+            *" "*) bad="$t" ;;
+        esac
+    done
+    [ -n "$bad" ] && json_err "400 Bad Request" "invalid target: $bad"
+
+    # уникальность FQDN
+    base=$(printf '%s' "$BODY" | jq -r '.base // "himik1987.duckdns.org"')
+    dup=$(printf '%s' "$BODY" | jq -r --arg base "$base" \
+        '[.sites[] | (if (.sub // "") == "" then $base else ((.sub) + "." + $base) end)] | group_by(.) | map(select(length > 1)) | .[0][0] // empty')
+    [ -n "$dup" ] && json_err "409 Conflict" "duplicate host: $dup"
+
+    # нормализация
+    new=$(printf '%s' "$BODY" | jq -c '{
+        base: (.base // "himik1987.duckdns.org"),
+        listen_ip: (.listen_ip // "192.168.1.1"),
+        local_domain: (.local_domain == true),
+        sites: [ .sites[] | {
+            id: (.id // ((.sub // "root") + "-" + ((.target // "") | gsub("[^a-zA-Z0-9]"; "") | .[0:12]))),
+            sub: (.sub // ""),
+            name: (.name // (.sub // "корень")),
+            target: .target,
+            public: (.public == true),
+            enabled: (.enabled != false),
+            ws: (.ws == true),
+            verify: (.verify == true)
+        } ]
+    }')
+
+    tmp=$(mktemp "$BASE_DIR/.sites.XXXXXX") || json_err "500 Internal Server Error" "tmp"
+    printf '%s\n' "$new" > "$tmp"
+    mv -f "$tmp" "$JSON"
+
+    out=$(sh "$APPLY" 2>&1)
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        json_out "$(jq -n --arg o "$out" '{ok:false,error:"apply failed",detail:$o}')"
+        exit 0
+    fi
+    json_out "$(jq -n --arg o "$out" '{ok:true,data:{message:$o}}')"
+    ;;
+
+sync-ip)
+    out=$(sh "$SYNC" --force 2>&1)
+    json_out "$(jq -n --arg o "$out" '{ok:true,data:{result:$o}}')"
+    ;;
+
+renew-cert)
+    (
+        cbase=$(jq -r '.base // "himik1987.duckdns.org"' "$JSON")
+        echo "=== start $(date '+%F %T') for $cbase ===" >/var/log/duckdns-cert.log
+        /usr/lib/acme/client/acme.sh --issue --server letsencrypt --dns dns_duckdns \
+            -d "$cbase" -d "*.$cbase" \
+            --home /etc/acme --force >>/var/log/duckdns-cert.log 2>&1
+        /usr/lib/acme/client/acme.sh --install-cert \
+            -d "$cbase" --ecc \
+            --key-file /etc/nginx/ssl/ha.key --fullchain-file /etc/nginx/ssl/ha.crt \
+            --reloadcmd "/etc/init.d/nginx reload" --home /etc/acme >>/var/log/duckdns-cert.log 2>&1
+        echo "=== done $(date '+%F %T')" >>/var/log/duckdns-cert.log
+    ) >/dev/null 2>&1 &
+    json_out '{"ok":true,"data":{"message":"certificate renewal started"}}'
+    ;;
+
+cert-log)
+    log=""
+    [ -f /var/log/duckdns-cert.log ] && log=$(tail -12 /var/log/duckdns-cert.log 2>/dev/null)
+    json_out "$(jq -n --arg l "$log" '{ok:true,data:{log:$l}}')"
+    ;;
+
+token)
+    tok=$(printf '%s' "$BODY" | jq -r '.token // empty' 2>/dev/null)
+    [ -n "$tok" ] || json_err "400 Bad Request" "token required"
+    case "$tok" in
+        *[!a-zA-Z0-9-]*) json_err "400 Bad Request" "invalid token format" ;;
+    esac
+    printf '%s' "$tok" > "$BASE_DIR/token"
+    chmod 600 "$BASE_DIR/token"
+    json_out '{"ok":true,"data":{"message":"token saved"}}'
+    ;;
+
+*)
+    json_err "404 Not Found" "unknown action"
+    ;;
+esac

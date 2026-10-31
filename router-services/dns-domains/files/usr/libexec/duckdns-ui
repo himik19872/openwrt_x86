@@ -1,0 +1,38 @@
+#!/bin/sh
+# /usr/libexec/duckdns-ui — отдаёт HTML панели только после Basic Auth
+
+check_auth() {
+    case "$HTTP_AUTHORIZATION" in
+        Bearer\ *)
+            if [ -s /etc/duckdns/api.key ] &&
+                [ "${HTTP_AUTHORIZATION#Bearer }" = "$(cat /etc/duckdns/api.key)" ]; then
+                return 0
+            fi
+            return 1
+            ;;
+    esac
+    [ -n "$HTTP_AUTHORIZATION" ] || return 1
+    cred=$(printf '%s' "$HTTP_AUTHORIZATION" | sed 's/^Basic //')
+    decoded=$(printf '%s' "$cred" | base64 -d 2>/dev/null) || return 1
+    user=${decoded%%:*}
+    pass=${decoded#*:}
+    [ "$user" = "root" ] || return 1
+    hash=$(awk -F: '$1=="root"{print $2}' /etc/shadow)
+    case "$hash" in
+        \$6\$*) algo="-6" ;;
+        \$5\$*) algo="-5" ;;
+        \$1\$*) algo="-1" ;;
+        *) return 1 ;;
+    esac
+    salt=$(printf '%s' "$hash" | cut -d'$' -f3)
+    calc=$(openssl passwd "$algo" -salt "$salt" "$pass" 2>/dev/null)
+    [ "$calc" = "$hash" ]
+}
+
+if ! check_auth; then
+    printf 'Status: 401 Unauthorized\nWWW-Authenticate: Basic realm="dns-admin"\nContent-Type: text/plain; charset=utf-8\nCache-Control: no-store\n\n401 Unauthorized\n'
+    exit 0
+fi
+
+printf 'Content-Type: text/html; charset=utf-8\nCache-Control: no-store\n\n'
+cat /www/dns/index.html

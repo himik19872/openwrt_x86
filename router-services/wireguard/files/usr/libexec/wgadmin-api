@@ -1,0 +1,360 @@
+#!/bin/sh
+# wg-admin backend: CGI API для управления WireGuard-сервером на OpenWrt
+# Хранилище: /etc/wgadmin/{config.json,clients.json,server.key,server.pub}
+
+BASE=/etc/wgadmin
+CFG="$BASE/config.json"
+CLIENTS="$BASE/clients.json"
+SERVER_KEY="$BASE/server.key"
+SERVER_PUB="$BASE/server.pub"
+WG_IF=wg0
+
+# ---------- helpers ----------
+hdr() { printf 'Content-Type: application/json; charset=utf-8\nCache-Control: no-store\n\n'; }
+json_out() { hdr; printf '%s\n' "$1"; }
+json_ok()  { json_out "{\"ok\":true,\"data\":$1}"; }
+json_err() { printf 'Status: %s\nContent-Type: application/json; charset=utf-8\nCache-Control: no-store\n\n{"ok":false,"error":"%s"}\n' "$1" "$2"; exit 0; }
+
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+get_wan_ip() {
+    ubus call network.interface.wan status 2>/dev/null \
+        | jq -r '."ipv4-address"[0].address // empty' 2>/dev/null
+}
+
+get_opt() { jq -r "$1 // empty" "$CFG" 2>/dev/null; }
+
+endpoint_effective() {
+    ep=$(get_opt '.endpoint')
+    [ -z "$ep" ] && ep=$(get_wan_ip)
+    printf '%s' "$ep"
+}
+
+gen_id() { hexdump -n 8 -e '8/1 "%02x"' /dev/urandom; }
+
+next_ip() {
+    used=$(jq -r '.clients[].ip' "$CLIENTS" 2>/dev/null)
+    i=2
+    while [ "$i" -le 254 ]; do
+        cand="10.66.66.$i"
+        if ! printf '%s\n' "$used" | grep -qx "$cand"; then
+            printf '%s' "$cand"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+    return 1
+}
+
+apply_peer() { # $1=id $2=pub $3=psk $4=ip
+    _id="$1"; _pub="$2"; _psk="$3"; _ip="$4"
+    _ka=$(get_opt '.keepalive'); [ -z "$_ka" ] && _ka=25
+
+    uci -q delete "network.wgpeer_$_id"
+    uci set "network.wgpeer_$_id=wireguard_wg0"
+    uci set "network.wgpeer_$_id.public_key=$_pub"
+    uci set "network.wgpeer_$_id.preshared_key=$_psk"
+    uci add_list "network.wgpeer_$_id.allowed_ips=$_ip/32"
+    uci set "network.wgpeer_$_id.persistent_keepalive=$_ka"
+    uci commit network
+
+    printf '%s' "$_psk" > "$BASE/.psk.tmp"
+    chmod 600 "$BASE/.psk.tmp"
+    wg set "$WG_IF" peer "$_pub" preshared-key "$BASE/.psk.tmp" \
+        allowed-ips "$_ip/32" persistent-keepalive "$_ka" 2>/dev/null
+    rm -f "$BASE/.psk.tmp"
+    ip route replace "$_ip/32" dev "$WG_IF" 2>/dev/null
+}
+
+remove_peer() { # $1=id $2=pub $3=ip
+    wg set "$WG_IF" peer "$2" remove 2>/dev/null
+    [ -n "$3" ] && ip route del "$3/32" dev "$WG_IF" 2>/dev/null
+    uci -q delete "network.wgpeer_$1"
+    uci commit network
+}
+
+peer_conf() { # $1=id  -> печатает конфиг клиента
+    _id="$1"
+    row=$(jq -r --arg id "$_id" '.clients[] | select(.id==$id) | [.ip,.priv,.psk,.name] | @tsv' "$CLIENTS" 2>/dev/null)
+    [ -z "$row" ] && return 1
+    _ip=$(printf '%s' "$row" | cut -f1)
+    _priv=$(printf '%s' "$row" | cut -f2)
+    _psk=$(printf '%s' "$row" | cut -f3)
+
+    _ep=$(endpoint_effective)
+    _port=$(get_opt '.port'); [ -z "$_port" ] && _port=51820
+    _dns=$(get_opt '.dns'); [ -z "$_dns" ] && _dns="10.66.66.1"
+    _allowed=$(get_opt '.allowed_ips'); [ -z "$_allowed" ] && _allowed="0.0.0.0/0, ::/0"
+    _ka=$(get_opt '.keepalive'); [ -z "$_ka" ] && _ka=25
+    _pub=$(cat "$SERVER_PUB" 2>/dev/null)
+
+    cat <<EOF
+[Interface]
+PrivateKey = $_priv
+Address = $_ip/24
+DNS = $_dns
+
+[Peer]
+PublicKey = $_pub
+PresharedKey = $_psk
+Endpoint = $_ep:$_port
+AllowedIPs = $_allowed
+PersistentKeepalive = $_ka
+EOF
+}
+
+peer_status_json() {
+    dump=$(wg show "$WG_IF" dump 2>/dev/null)
+    peers=$(printf '%s\n' "$dump" | tail -n +2 | jq -R -s '
+        split("\n") | map(select(length>0) | split("\t")) |
+        map({pub:.[0], endpoint:.[2], allowed:.[3],
+             handshake:(.[4]|tonumber), rx:(.[5]|tonumber), tx:(.[6]|tonumber)})')
+    [ -z "$peers" ] && peers='[]'
+    now=$(date +%s)
+    jq -c --argjson peers "$peers" --argjson now "$now" '
+        .clients | map(. as $c |
+            (($peers | map(select(.pub == $c.pub)) | .[0]) // {}) as $p |
+            {id:$c.id, name:$c.name, ip:$c.ip, pub:$c.pub, enabled:$c.enabled,
+             created:$c.created, endpoint:($p.endpoint // ""),
+             handshake:($p.handshake // 0), rx:($p.rx // 0), tx:($p.tx // 0),
+             online: (($p.handshake // 0) > 0 and (($now - ($p.handshake // 0)) < 180))})' \
+        "$CLIENTS"
+}
+
+# ---------- auth ----------
+check_auth() {
+    # API-токен для скриптов и автоматизации: Authorization: Bearer <key>
+    case "$HTTP_AUTHORIZATION" in
+        Bearer\ *)
+            if [ -s "$BASE/api.key" ] && \
+               [ "${HTTP_AUTHORIZATION#Bearer }" = "$(cat "$BASE/api.key")" ]; then
+                return 0
+            fi
+            return 1
+            ;;
+    esac
+
+    [ -n "$HTTP_AUTHORIZATION" ] || return 1
+    cred=$(printf '%s' "$HTTP_AUTHORIZATION" | sed 's/^Basic //')
+    decoded=$(printf '%s' "$cred" | base64 -d 2>/dev/null) || return 1
+    user=${decoded%%:*}
+    pass=${decoded#*:}
+    [ "$user" = "root" ] || return 1
+
+    hash=$(awk -F: '$1=="root"{print $2}' /etc/shadow)
+    case "$hash" in
+        \$6\$*) algo="-6" ;;
+        \$5\$*) algo="-5" ;;
+        \$1\$*) algo="-1" ;;
+        *) return 1 ;;
+    esac
+    salt=$(printf '%s' "$hash" | cut -d'$' -f3)
+    calc=$(openssl passwd "$algo" -salt "$salt" "$pass" 2>/dev/null)
+    [ "$calc" = "$hash" ]
+}
+
+# ---------- request parsing ----------
+QS="$QUERY_STRING"
+ACTION=$(printf '%s' "$QS" | sed -n 's/.*action=\([^&]*\).*/\1/p' | head -1)
+ID=$(printf '%s' "$QS" | sed -n 's/.*id=\([^&]*\).*/\1/p' | head -1)
+[ -z "$ACTION" ] && ACTION=ui
+
+BODY=""
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    CLEN=${CONTENT_LENGTH:-0}
+    case "$CLEN" in ''|*[!0-9]*) CLEN=0 ;; esac
+    [ "$CLEN" -gt 0 ] && BODY=$(dd bs=1 count="$CLEN" 2>/dev/null)
+fi
+
+# ---------- auth gate ----------
+if ! check_auth; then
+    printf 'Status: 401 Unauthorized\nWWW-Authenticate: Basic realm="wg-admin"\nContent-Type: text/plain; charset=utf-8\nCache-Control: no-store\n\n401 Unauthorized\n'
+    exit 0
+fi
+
+# CSRF-защита: изменяющие запросы принимаются только как JSON
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    case "$CONTENT_TYPE" in
+        application/json*) ;;
+        *) json_err "415 Unsupported Media Type" "application/json required" ;;
+    esac
+fi
+
+[ -f "$CLIENTS" ] || printf '{"clients":[]}\n' > "$CLIENTS"
+[ -f "$CFG" ] || printf '{"endpoint":"","port":51820,"dns":"10.66.66.1","allowed_ips":"0.0.0.0/0, ::/0","keepalive":25}\n' > "$CFG"
+
+# ---------- routes ----------
+case "$ACTION" in
+
+ui)
+    printf 'Content-Type: text/html; charset=utf-8\nCache-Control: no-store\n\n'
+    cat /www/wgadmin/index.html
+    ;;
+
+status)
+    ep=$(endpoint_effective)
+    wan=$(get_wan_ip)
+    port_listen=$(wg show "$WG_IF" listen-port 2>/dev/null)
+    port_cfg=$(get_opt '.port'); [ -z "$port_cfg" ] && port_cfg=51820
+    [ -z "$port_listen" ] && port_listen=$port_cfg
+    pub=$(cat "$SERVER_PUB" 2>/dev/null)
+    clients=$(peer_status_json)
+    [ -z "$clients" ] && clients='[]'
+    ka=$(get_opt '.keepalive'); [ -z "$ka" ] && ka=25
+
+    json_ok "$(jq -n -c \
+        --arg pub "$pub" --arg ep "$ep" --arg wan "$wan" \
+        --argjson port "$port_cfg" --argjson listen "$port_listen" \
+        --arg dns "$(get_opt '.dns')" \
+        --arg allowed "$(get_opt '.allowed_ips')" \
+        --argjson ka "$ka" \
+        --argjson clients "$clients" \
+        '{server:{pubkey:$pub, endpoint:$ep, wan_ip:$wan, port:$port,
+                  listen_port:$listen, dns:$dns, allowed_ips:$allowed,
+                  keepalive:$ka}, clients:$clients}')"
+    ;;
+
+add)
+    name=$(printf '%s' "$BODY" | jq -r '.name // empty' 2>/dev/null | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    [ -n "$name" ] || json_err "400 Bad Request" "empty name"
+    [ ${#name} -le 64 ] || json_err "400 Bad Request" "name too long"
+
+    count=$(jq '.clients | length' "$CLIENTS" 2>/dev/null)
+    [ "$count" -ge 254 ] && json_err "409 Conflict" "client limit reached"
+
+    ip=$(next_ip) || json_err "409 Conflict" "no free IP"
+    id=$(gen_id)
+    priv=$(wg genkey)
+    pub=$(printf '%s' "$priv" | wg pubkey)
+    psk=$(wg genpsk)
+    created=$(date +%s)
+
+    jq --arg id "$id" --arg name "$name" --arg ip "$ip" --arg pub "$pub" \
+       --arg priv "$priv" --arg psk "$psk" --argjson created "$created" \
+       '.clients += [{id:$id,name:$name,ip:$ip,pub:$pub,priv:$priv,psk:$psk,
+                      created:$created,enabled:true}]' \
+       "$CLIENTS" > "$CLIENTS.tmp" && mv "$CLIENTS.tmp" "$CLIENTS"
+    chmod 600 "$CLIENTS"
+
+    apply_peer "$id" "$pub" "$psk" "$ip"
+    logger -t wgadmin "client added: $name ($ip)"
+
+    json_ok "$(jq -n -c --arg id "$id" --arg ip "$ip" '{id:$id, ip:$ip}')"
+    ;;
+
+delete)
+    [ -n "$ID" ] || json_err "400 Bad Request" "missing id"
+    case "$ID" in *[!0-9a-f]*) json_err "400 Bad Request" "bad id" ;; esac
+    row=$(jq -r --arg id "$ID" '.clients[] | select(.id==$id) | [.pub,.name,.ip] | @tsv' "$CLIENTS")
+    [ -z "$row" ] && json_err "404 Not Found" "client not found"
+    pub=$(printf '%s' "$row" | cut -f1)
+    name=$(printf '%s' "$row" | cut -f2)
+    ip=$(printf '%s' "$row" | cut -f3)
+
+    remove_peer "$ID" "$pub" "$ip"
+    jq --arg id "$ID" '.clients |= map(select(.id != $id))' "$CLIENTS" > "$CLIENTS.tmp" \
+        && mv "$CLIENTS.tmp" "$CLIENTS"
+    rm -f "$BASE/$ID.conf"
+    logger -t wgadmin "client deleted: $name"
+
+    json_ok '{"deleted":true}'
+    ;;
+
+toggle)
+    [ -n "$ID" ] || json_err "400 Bad Request" "missing id"
+    case "$ID" in *[!0-9a-f]*) json_err "400 Bad Request" "bad id" ;; esac
+    row=$(jq -r --arg id "$ID" '.clients[] | select(.id==$id) | [.pub,.psk,.ip,.enabled,.name] | @tsv' "$CLIENTS")
+    [ -z "$row" ] && json_err "404 Not Found" "client not found"
+    pub=$(printf '%s' "$row" | cut -f1)
+    psk=$(printf '%s' "$row" | cut -f2)
+    ip=$(printf '%s' "$row" | cut -f3)
+    en=$(printf '%s' "$row" | cut -f4)
+    name=$(printf '%s' "$row" | cut -f5)
+
+    if [ "$en" = "true" ]; then
+        remove_peer "$ID" "$pub" "$ip"
+        new=false
+    else
+        apply_peer "$ID" "$pub" "$psk" "$ip"
+        new=true
+    fi
+    jq --arg id "$ID" --argjson en "$new" \
+       '(.clients[] | select(.id==$id) | .enabled) |= $en' "$CLIENTS" > "$CLIENTS.tmp" \
+       && mv "$CLIENTS.tmp" "$CLIENTS"
+    logger -t wgadmin "client $name enabled=$new"
+
+    json_ok "$(jq -n -c --argjson en "$new" '{enabled:$en}')"
+    ;;
+
+download)
+    [ -n "$ID" ] || json_err "400 Bad Request" "missing id"
+    case "$ID" in *[!0-9a-f]*) json_err "400 Bad Request" "bad id" ;; esac
+    conf=$(peer_conf "$ID") || json_err "404 Not Found" "client not found"
+    name=$(jq -r --arg id "$ID" '.clients[] | select(.id==$id) | .name' "$CLIENTS")
+    safe=$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_')
+    printf 'Content-Type: application/octet-stream\nContent-Disposition: attachment; filename="%s.conf"\nCache-Control: no-store\n\n' "$safe"
+    printf '%s\n' "$conf"
+    ;;
+
+qr)
+    [ -n "$ID" ] || json_err "400 Bad Request" "missing id"
+    case "$ID" in *[!0-9a-f]*) json_err "400 Bad Request" "bad id" ;; esac
+    conf=$(peer_conf "$ID") || json_err "404 Not Found" "client not found"
+    printf 'Content-Type: image/svg+xml\nCache-Control: no-store\n\n'
+    printf '%s\n' "$conf" | qrencode -t SVG -s 6 -m 2 -o -
+    ;;
+
+config)
+    [ "$REQUEST_METHOD" = "POST" ] || json_err "405 Method Not Allowed" "POST required"
+    has_ep=$(printf '%s' "$BODY" | jq -r 'has("endpoint")' 2>/dev/null)
+    has_dns=$(printf '%s' "$BODY" | jq -r 'has("dns")' 2>/dev/null)
+    has_ai=$(printf '%s' "$BODY" | jq -r 'has("allowed_ips")' 2>/dev/null)
+    new_endpoint=$(printf '%s' "$BODY" | jq -r '.endpoint // empty' 2>/dev/null)
+    new_dns=$(printf '%s' "$BODY" | jq -r '.dns // empty' 2>/dev/null)
+    new_allowed=$(printf '%s' "$BODY" | jq -r '.allowed_ips // empty' 2>/dev/null)
+    new_ka=$(printf '%s' "$BODY" | jq -r 'if has("keepalive") then (.keepalive|tostring) else empty end' 2>/dev/null)
+    new_port=$(printf '%s' "$BODY" | jq -r 'if has("port") then (.port|tostring) else empty end' 2>/dev/null)
+
+    if [ -n "$new_port" ]; then
+        case "$new_port" in ''|*[!0-9]*) json_err "400 Bad Request" "bad port" ;; esac
+        [ "$new_port" -ge 1 ] && [ "$new_port" -le 65535 ] || json_err "400 Bad Request" "bad port"
+    fi
+    if [ -n "$new_ka" ]; then
+        case "$new_ka" in ''|*[!0-9]*) json_err "400 Bad Request" "bad keepalive" ;; esac
+        [ "$new_ka" -ge 0 ] && [ "$new_ka" -le 65535 ] || json_err "400 Bad Request" "bad keepalive"
+    fi
+    case "$new_endpoint" in *\"*) json_err "400 Bad Request" "bad endpoint" ;; esac
+    case "$new_dns" in *\"*) json_err "400 Bad Request" "bad dns" ;; esac
+
+    jq --arg ep "$new_endpoint" --arg dns "$new_dns" --arg ai "$new_allowed" \
+       --arg ka "$new_ka" --arg port "$new_port" \
+       --arg has_ep "$has_ep" --arg has_dns "$has_dns" --arg has_ai "$has_ai" '
+        (if $has_ep  == "true" then .endpoint    = $ep   else . end) |
+        (if $has_dns == "true" then .dns         = $dns  else . end) |
+        (if $has_ai  == "true" then .allowed_ips = $ai   else . end) |
+        (if $ka   != "" then .keepalive   = ($ka|tonumber) else . end) |
+        (if $port != "" then .port        = ($port|tonumber) else . end)' \
+       "$CFG" > "$CFG.tmp" && mv "$CFG.tmp" "$CFG"
+
+    if [ -n "$new_port" ]; then
+        uci set "network.$WG_IF.listen_port=$new_port"
+        uci commit network
+        ifup "$WG_IF" >/dev/null 2>&1
+        uci -q delete firewall.allow_wireguard
+        uci set firewall.allow_wireguard='rule'
+        uci set firewall.allow_wireguard.name='Allow-WireGuard'
+        uci set firewall.allow_wireguard.src='wan'
+        uci set firewall.allow_wireguard.proto='udp'
+        uci set firewall.allow_wireguard.dest_port="$new_port"
+        uci set firewall.allow_wireguard.target='ACCEPT'
+        uci commit firewall
+        /etc/init.d/firewall reload >/dev/null 2>&1
+    fi
+    logger -t wgadmin "server config updated"
+    json_ok "$(cat "$CFG")"
+    ;;
+
+*)
+    json_err "404 Not Found" "unknown action"
+    ;;
+esac

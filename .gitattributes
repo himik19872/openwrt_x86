@@ -1,0 +1,5 @@
+# Все текстовые файлы — LF: скрипты должны работать на роутере (ash), без CRLF
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.wav binary

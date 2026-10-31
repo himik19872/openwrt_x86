@@ -1,0 +1,96 @@
+#!/bin/sh
+# netmon-scan: сканирование сети
+#   без аргументов  — вывести JSON (и обновить кэш /tmp/netmon-scan.json)
+#   --notify        — дополнительно уведомить о новых устройствах (known.json)
+
+BASE=/etc/netmon
+SET="$BASE/settings.json"
+KNOWN="$BASE/known.json"
+CACHE=/tmp/netmon-scan.json
+NOTIFY=0
+[ "$1" = "--notify" ] && NOTIFY=1
+
+[ -f "$SET" ] || exit 0
+
+BASEIP=$(uci -q get network.lan.ipaddr | cut -d/ -f1 | cut -d. -f1-3)
+[ -n "$BASEIP" ] || BASEIP=192.168.1
+
+: > /tmp/netmon-dev-cron.tsv
+
+if command -v arp-scan >/dev/null 2>&1; then
+    arp-scan --interface=br-lan --localnet --quiet --retry=2 --timeout=1000 2>/dev/null \
+        | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print $1"\t"tolower($2)}' \
+        | while IFS="$(printf '\t')" read -r ip mac; do
+            name=$(awk -v m="$mac" 'tolower($2)==m {print $4; exit}' /tmp/dhcp.leases 2>/dev/null)
+            [ "$name" = "*" ] && name=""
+            printf '%s\t%s\tREACHABLE\t%s\n' "$ip" "$mac" "$name" >> /tmp/netmon-dev-cron.tsv
+        done
+else
+    i=1
+    while [ "$i" -le 254 ]; do
+        arping -c 1 -w 1 -q -I br-lan "$BASEIP.$i" >/dev/null 2>&1 &
+        i=$((i + 1))
+    done
+    wait
+    sleep 1
+
+    ip -4 neigh show dev br-lan 2>/dev/null \
+        | awk '$2=="lladdr" && $4!="FAILED" && $4!="INCOMPLETE" {print $1"\t"tolower($3)"\t"$4}' \
+        | while IFS="$(printf '\t')" read -r ip mac st; do
+            name=$(awk -v m="$mac" 'tolower($2)==m {print $4; exit}' /tmp/dhcp.leases 2>/dev/null)
+            [ "$name" = "*" ] && name=""
+            printf '%s\t%s\t%s\t%s\n' "$ip" "$mac" "$st" "$name" >> /tmp/netmon-dev-cron.tsv
+        done
+fi
+
+NOW=$(date +%s)
+jq -R -s --argjson ts "$NOW" '
+    split("\n")
+    | map(select(length > 0) | split("\t"))
+    | map({ip: .[0], mac: .[1], state: .[2], name: (.[3] // ""),
+           online: ((.[2] == "REACHABLE") or (.[2] == "DELAY") or (.[2] == "PROBE"))})
+    | {ts: $ts, devices: .}
+' /tmp/netmon-dev-cron.tsv > "$CACHE" 2>/dev/null
+
+[ "$NOTIFY" = "1" ] || { cat "$CACHE"; exit 0; }
+
+# первый запуск: запомнить текущие устройства без уведомлений
+if [ ! -f "$KNOWN" ]; then
+    jq --argjson ts "$NOW" \
+        '{devices: [.devices[] | {mac: .mac, ip: .ip, name: .name, first_seen: $ts}]}' \
+        "$CACHE" > "$KNOWN" 2>/dev/null
+    chmod 600 "$KNOWN"
+    logger -t netmon "known devices initialized: $(jq '.devices|length' "$KNOWN")"
+    exit 0
+fi
+
+enabled=$(jq -r 'if has("net_new_device") then .net_new_device else true end' "$SET" 2>/dev/null)
+
+# обновить/добавить устройства
+jq -r '.devices[] | select(.online) | [.mac, .ip, .name] | @tsv' "$CACHE" 2>/dev/null \
+| while IFS="$(printf '\t')" read -r mac ip name; do
+    [ -n "$mac" ] || continue
+    exists=$(jq -r --arg mac "$mac" '.devices[] | select(.mac == $mac) | .mac' "$KNOWN" 2>/dev/null | head -1)
+
+    if [ -n "$exists" ]; then
+        jq --arg mac "$mac" --arg ip "$ip" --arg name "$name" '
+            .devices |= map(if .mac == $mac then .ip = $ip | .name = $name else . end)
+        ' "$KNOWN" > "$KNOWN.tmp" 2>/dev/null && mv "$KNOWN.tmp" "$KNOWN"
+        continue
+    fi
+
+    jq --arg mac "$mac" --arg ip "$ip" --arg name "$name" --argjson ts "$NOW" '
+        .devices += [{mac: $mac, ip: $ip, name: $name, first_seen: $ts}]
+    ' "$KNOWN" > "$KNOWN.tmp" 2>/dev/null && mv "$KNOWN.tmp" "$KNOWN"
+
+    if [ "$enabled" = "true" ]; then
+        label="${name:-неизвестно}"
+        /usr/libexec/notify-tg "🆕 Новое устройство в сети
+Имя: ${label}
+IP: ${ip}
+MAC: ${mac}"
+        logger -t netmon "new device: ${label} ${ip} ${mac}"
+    fi
+done
+
+chmod 600 "$KNOWN" 2>/dev/null

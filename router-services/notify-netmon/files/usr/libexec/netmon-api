@@ -1,0 +1,260 @@
+#!/bin/sh
+# netmon-api: настройки Telegram-уведомлений + мониторинг устройств сети
+# Авторизация: Basic root/<пароль root> либо Bearer <api.key>
+
+BASE=/etc/netmon
+SET="$BASE/settings.json"
+DEV="$BASE/devices.json"
+CACHE=/tmp/netmon-scan.json
+STATE=/tmp/netmon-state.json
+
+DEFAULT_SETTINGS='{"token":"","chat_id":"","ups_online":true,"ups_onbatt":true,"ups_lowbatt":true,"ups_fsd":true,"ups_commbad":true,"ups_commok":true,"ups_shutdown":true,"ups_replbatt":true,"net_online":true,"net_offline":true,"net_new_device":true}'
+
+mkdir -p "$BASE"
+[ -f "$SET" ] || printf '%s\n' "$DEFAULT_SETTINGS" > "$SET"
+[ -f "$DEV" ] || printf '{"devices":[]}\n' > "$DEV"
+chmod 600 "$DEV"
+# settings читает upsmon/другие сервисы от имени nutmon
+chown root:nutmon "$SET" 2>/dev/null
+chmod 640 "$SET"
+
+hdr() { printf 'Content-Type: application/json; charset=utf-8\nCache-Control: no-store\n\n'; }
+json_out() { hdr; printf '%s\n' "$1"; }
+json_ok()  { json_out "{\"ok\":true,\"data\":$1}"; }
+json_err() { printf 'Status: %s\nContent-Type: application/json; charset=utf-8\nCache-Control: no-store\n\n{"ok":false,"error":"%s"}\n' "$1" "$2"; exit 0; }
+
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+check_auth() {
+    case "$HTTP_AUTHORIZATION" in
+        Bearer\ *)
+            if [ -s "$BASE/api.key" ] && \
+               [ "${HTTP_AUTHORIZATION#Bearer }" = "$(cat "$BASE/api.key")" ]; then
+                return 0
+            fi
+            return 1
+            ;;
+    esac
+
+    [ -n "$HTTP_AUTHORIZATION" ] || return 1
+    cred=$(printf '%s' "$HTTP_AUTHORIZATION" | sed 's/^Basic //')
+    decoded=$(printf '%s' "$cred" | base64 -d 2>/dev/null) || return 1
+    user=${decoded%%:*}
+    pass=${decoded#*:}
+    [ "$user" = "root" ] || return 1
+
+    hash=$(awk -F: '$1=="root"{print $2}' /etc/shadow)
+    case "$hash" in
+        \$6\$*) algo="-6" ;;
+        \$5\$*) algo="-5" ;;
+        \$1\$*) algo="-1" ;;
+        *) return 1 ;;
+    esac
+    salt=$(printf '%s' "$hash" | cut -d'$' -f3)
+    calc=$(openssl passwd "$algo" -salt "$salt" "$pass" 2>/dev/null)
+    [ "$calc" = "$hash" ]
+}
+
+# ---------- scan ----------
+scan_network() {
+    force="$1"
+    NOW=$(date +%s)
+
+    if [ "$force" != "1" ] && [ -s "$CACHE" ]; then
+        TS=$(jq -r '.ts // 0' "$CACHE" 2>/dev/null)
+        case "$TS" in ''|*[!0-9]*) TS=0 ;; esac
+        if [ $((NOW - TS)) -lt 20 ]; then
+            return 0
+        fi
+    fi
+
+    CONFDIR=/tmp/netmon-scan.lock
+    if ! mkdir "$CONFDIR" 2>/dev/null; then
+        [ -s "$CACHE" ] && return 0
+        sleep 2
+        return 0
+    fi
+
+    BASEIP=$(uci -q get network.lan.ipaddr | cut -d/ -f1 | cut -d. -f1-3)
+    [ -n "$BASEIP" ] || BASEIP=192.168.1
+
+    : > /tmp/netmon-dev.tsv
+    if command -v arp-scan >/dev/null 2>&1; then
+        arp-scan --interface=br-lan --localnet --quiet --retry=2 --timeout=1000 2>/dev/null \
+            | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print $1"\t"tolower($2)}' \
+            | while IFS="$(printf '\t')" read -r ip mac; do
+                name=$(awk -v m="$mac" 'tolower($2)==m {print $4; exit}' /tmp/dhcp.leases 2>/dev/null)
+                [ "$name" = "*" ] && name=""
+                printf '%s\t%s\tREACHABLE\t%s\n' "$ip" "$mac" "$name" >> /tmp/netmon-dev.tsv
+            done
+    else
+        i=1
+        while [ "$i" -le 254 ]; do
+            arping -c 1 -w 1 -q -I br-lan "$BASEIP.$i" >/dev/null 2>&1 &
+            i=$((i + 1))
+        done
+        wait
+        sleep 1
+
+        ip -4 neigh show dev br-lan 2>/dev/null \
+            | awk '$2=="lladdr" && $4!="FAILED" && $4!="INCOMPLETE" {print $1"\t"tolower($3)"\t"$4}' \
+            | while IFS="$(printf '\t')" read -r ip mac st; do
+                name=$(awk -v m="$mac" 'tolower($2)==m {print $4; exit}' /tmp/dhcp.leases 2>/dev/null)
+                [ "$name" = "*" ] && name=""
+                printf '%s\t%s\t%s\t%s\n' "$ip" "$mac" "$st" "$name" >> /tmp/netmon-dev.tsv
+            done
+    fi
+
+    # дополнительные проверки отслеживаемых устройств (arp-scan иногда их пропускает)
+    : > /tmp/netmon-extra.tsv
+    jq -r '.devices[] | [.ip, .mac, .name] | @tsv' "$DEV" 2>/dev/null > /tmp/netmon-watched.tsv
+    while IFS="$(printf '\t')" read -r ip mac name; do
+        [ -n "$ip" ] || continue
+        awk -F'\t' -v ip="$ip" '$1==ip {found=1} END {exit !found}' /tmp/netmon-dev.tsv && continue
+        ( arping -c 1 -w 1 -q -I br-lan "$ip" >/dev/null 2>&1 && \
+          printf '%s\t%s\tREACHABLE\t%s\n' "$ip" "$mac" "$name" >> /tmp/netmon-extra.tsv ) &
+    done < /tmp/netmon-watched.tsv
+    wait
+    cat /tmp/netmon-extra.tsv >> /tmp/netmon-dev.tsv 2>/dev/null
+
+    jq -R -s --argjson ts "$NOW" '
+        split("\n")
+        | map(select(length > 0) | split("\t"))
+        | map({ip: .[0], mac: .[1], state: .[2], name: (.[3] // ""),
+               online: ((.[2] == "REACHABLE") or (.[2] == "DELAY") or (.[2] == "PROBE"))})
+        | {ts: $ts, devices: .}
+    ' /tmp/netmon-dev.tsv > "$CACHE" 2>/dev/null || printf '{"ts":%s,"devices":[]}\n' "$NOW" > "$CACHE"
+
+    rmdir "$CONFDIR" 2>/dev/null
+}
+
+build_status() {
+    settings=$(cat "$SET")
+    cfg=$(cat "$DEV")
+    scan=$(cat "$CACHE" 2>/dev/null)
+    [ -n "$scan" ] || scan='{"ts":0,"devices":[]}'
+
+    jq -n -c --argjson settings "$settings" --argjson cfg "$cfg" --argjson scan "$scan" '
+        ($cfg.devices // []) as $watched |
+        ($watched | map({key: .mac, value: .}) | from_entries) as $wmap |
+        (($scan.devices // []) | map(select(.online))) as $found |
+        ($found | map(.mac)) as $fmacs |
+        {
+          settings: $settings,
+          scanned_at: ($scan.ts // 0),
+          devices: (
+            [ ($found[] | . as $d
+                 | ($wmap[$d.mac] // {}) as $c
+                 | $d + {
+                     watch: ($c.watch // false),
+                     notify_online: (if ($c | has("notify_online")) then $c.notify_online else true end),
+                     notify_offline: (if ($c | has("notify_offline")) then $c.notify_offline else true end)
+                   }),
+              ($watched[] | . as $c
+                 | select(($fmacs | index($c.mac)) == null)
+                 | {ip: ($c.ip // ""), mac: $c.mac, name: ($c.name // ""),
+                    state: "OFFLINE", online: false, watch: true,
+                    notify_online: (if ($c | has("notify_online")) then $c.notify_online else true end),
+                    notify_offline: (if ($c | has("notify_offline")) then $c.notify_offline else true end)})
+            ]
+            | sort_by(.ip | split(".") | map(tonumber? // 0))
+          )
+        }'
+}
+
+# ---------- request ----------
+QS="$QUERY_STRING"
+ACTION=$(printf '%s' "$QS" | sed -n 's/.*action=\([^&]*\).*/\1/p' | head -1)
+[ -z "$ACTION" ] && ACTION=ui
+FORCE=$(printf '%s' "$QS" | sed -n 's/.*force=\([^&]*\).*/\1/p' | head -1)
+
+BODY=""
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    CLEN=${CONTENT_LENGTH:-0}
+    case "$CLEN" in ''|*[!0-9]*) CLEN=0 ;; esac
+    [ "$CLEN" -gt 0 ] && BODY=$(dd bs=1 count="$CLEN" 2>/dev/null)
+fi
+
+if ! check_auth; then
+    printf 'Status: 401 Unauthorized\nWWW-Authenticate: Basic realm="notify-admin"\nContent-Type: text/plain; charset=utf-8\nCache-Control: no-store\n\n401 Unauthorized\n'
+    exit 0
+fi
+
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    case "$CONTENT_TYPE" in
+        application/json*) ;;
+        *) json_err "415 Unsupported Media Type" "application/json required" ;;
+    esac
+fi
+
+case "$ACTION" in
+ui)
+    printf 'Content-Type: text/html; charset=utf-8\nCache-Control: no-store\n\n'
+    cat /www/notify/index.html
+    ;;
+
+status)
+    scan_network "$FORCE"
+    json_ok "$(build_status)"
+    ;;
+
+save)
+    [ "$REQUEST_METHOD" = "POST" ] || json_err "405 Method Not Allowed" "POST required"
+
+    token=$(printf '%s' "$BODY" | jq -r '.token // empty' 2>/dev/null)
+    chat=$(printf '%s' "$BODY" | jq -r '.chat_id // empty' 2>/dev/null)
+    case "$token" in *[[:space:]]*) json_err "400 Bad Request" "bad token" ;; esac
+    case "$chat" in *[[:space:]]*) json_err "400 Bad Request" "bad chat_id" ;; esac
+
+    jq --argjson b "$BODY" '
+        ["token","chat_id","ups_online","ups_onbatt","ups_lowbatt","ups_fsd",
+         "ups_commbad","ups_commok","ups_shutdown","ups_replbatt",
+         "net_online","net_offline","net_new_device"] as $keys
+        | reduce $keys[] as $k (.;
+            if ($b | has($k)) then .[$k] = $b[$k] else . end)
+    ' "$SET" > "$SET.tmp" && mv "$SET.tmp" "$SET"
+    chown root:nutmon "$SET" 2>/dev/null
+    chmod 640 "$SET"
+    logger -t netmon "settings updated"
+    json_ok "$(cat "$SET")"
+    ;;
+
+device)
+    [ "$REQUEST_METHOD" = "POST" ] || json_err "405 Method Not Allowed" "POST required"
+
+    mac=$(printf '%s' "$BODY" | jq -r '.mac // empty' 2>/dev/null)
+    ip=$(printf '%s' "$BODY" | jq -r '.ip // empty' 2>/dev/null)
+    name=$(printf '%s' "$BODY" | jq -r '.name // empty' 2>/dev/null)
+    watch=$(printf '%s' "$BODY" | jq -r 'if has("watch") then (.watch|tostring) else "false" end' 2>/dev/null)
+    non=$(printf '%s' "$BODY" | jq -r 'if has("notify_online") then (.notify_online|tostring) else "true" end' 2>/dev/null)
+    noff=$(printf '%s' "$BODY" | jq -r 'if has("notify_offline") then (.notify_offline|tostring) else "true" end' 2>/dev/null)
+
+    [ -n "$mac" ] || json_err "400 Bad Request" "missing mac"
+    case "$mac" in *[!0-9a-fA-F:]*) json_err "400 Bad Request" "bad mac" ;; esac
+
+    jq --arg mac "$mac" --arg ip "$ip" --arg name "$name" \
+       --argjson w "$watch" --argjson no "$non" --argjson nf "$noff" '
+        .devices = ((.devices // []) | map(select(.mac != $mac)))
+        + [{mac: $mac, ip: $ip, name: $name, watch: $w,
+            notify_online: $no, notify_offline: $nf}]
+    ' "$DEV" > "$DEV.tmp" && mv "$DEV.tmp" "$DEV"
+    chmod 600 "$DEV"
+
+    json_ok '{"saved":true}'
+    ;;
+
+test)
+    [ "$REQUEST_METHOD" = "POST" ] || json_err "405 Method Not Allowed" "POST required"
+    host=$(uci -q get system.@system[0].hostname)
+    out=$(/usr/libexec/notify-tg "✅ Тест уведомлений от ${host:-роутера}. Если вы это видите — всё настроено." 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        json_err "500 Internal Error" "$(json_escape "$out")"
+    fi
+    json_ok '{"sent":true}'
+    ;;
+
+*)
+    json_err "404 Not Found" "unknown action"
+    ;;
+esac

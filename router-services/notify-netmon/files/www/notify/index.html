@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Уведомления — Telegram и устройства</title>
+<style>
+  :root{
+    --bg:#0f1420; --card:#171e2e; --card2:#1e273a; --border:#2a3550;
+    --text:#e6ecf7; --muted:#8b98b3; --accent:#00d3a7; --accent2:#2f81f7;
+    --accent3:#29a9eb; --danger:#ff5572; --warn:#ffb020; --ok:#33d17a;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:radial-gradient(1200px 600px at 20% -10%,#1b2b45 0%,var(--bg) 55%);
+    color:var(--text); font:14px/1.5 -apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif;
+    min-height:100vh; padding:24px;
+  }
+  .wrap{max-width:1120px;margin:0 auto}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+  header h1{font-size:22px;margin:0;letter-spacing:.3px}
+  header .logo{
+    width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+    background:linear-gradient(135deg,#29a9eb,#2f81f7);color:#04121f;font-weight:800;font-size:18px;
+  }
+  .spacer{flex:1}
+  .badge{
+    padding:4px 11px;border-radius:999px;font-size:12px;border:1px solid var(--border);
+    background:var(--card);color:var(--muted);display:inline-flex;align-items:center;gap:6px;
+  }
+  .badge.ok{color:var(--ok);border-color:#235c42;background:#10281f}
+  .badge.warn{color:var(--warn);border-color:#5c4723;background:#2a2112}
+  .tabs{display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--border);padding-bottom:10px}
+  .tab{
+    padding:8px 16px;border-radius:9px;cursor:pointer;color:var(--muted);border:1px solid transparent;
+    background:transparent;font:inherit;
+  }
+  .tab.active{color:var(--text);background:var(--card);border-color:var(--border)}
+  .tab:hover{color:var(--text)}
+  .card{
+    background:linear-gradient(180deg,var(--card),#141a29);border:1px solid var(--border);
+    border-radius:var(--radius);padding:18px 20px;margin-bottom:18px;
+  }
+  .card h2{font-size:15px;margin:0 0 14px;font-weight:600;letter-spacing:.2px}
+  .card h2 span{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+  .field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+  .field label{font-size:12px;color:var(--muted)}
+  input[type=text],input[type=password],input[type=search]{
+    background:#0d1320;border:1px solid var(--border);color:var(--text);border-radius:9px;
+    padding:9px 11px;font:inherit;outline:none;width:100%;transition:.15s border;
+  }
+  input:focus{border-color:var(--accent2)}
+  .row2{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+  @media(max-width:640px){.row2{grid-template-columns:1fr}}
+  button{
+    cursor:pointer;font:inherit;border-radius:9px;border:1px solid var(--border);
+    background:var(--card2);color:var(--text);padding:9px 14px;transition:.15s;
+  }
+  button:hover{filter:brightness(1.15)}
+  button.primary{background:linear-gradient(135deg,var(--accent),#00b28d);border:0;color:#04231b;font-weight:700}
+  button.blue{background:linear-gradient(135deg,var(--accent2),#1f65c9);border:0;color:#fff;font-weight:600}
+  button.icon{padding:6px 10px;font-size:12px;background:transparent;border-color:var(--border);color:var(--muted)}
+  button.icon:hover{color:var(--text);border-color:var(--accent2)}
+  .hint{font-size:12px;color:var(--muted);margin-top:8px}
+  .hint code{background:#0d1320;padding:1px 5px;border-radius:4px;border:1px solid var(--border)}
+
+  .notify-group{margin-top:18px}
+  .notify-group h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin:0 0 10px;font-weight:500}
+  .switch-row{
+    display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);
+    border-radius:10px;background:#0d1320;margin-bottom:8px;
+  }
+  .switch-row .lbl{flex:1;font-size:13px}
+  .switch-row .lbl small{display:block;color:var(--muted);font-size:11px}
+  .switch{position:relative;width:36px;height:20px;flex:0 0 auto;display:inline-block;vertical-align:middle}
+  .switch input{opacity:0;width:0;height:0;position:absolute}
+  .switch span{
+    position:absolute;inset:0;background:#26314a;border-radius:999px;cursor:pointer;transition:.2s;
+    border:1px solid var(--border);
+  }
+  .switch span::after{
+    content:"";position:absolute;width:14px;height:14px;border-radius:50%;background:#8b98b3;
+    top:2px;left:2px;transition:.2s;
+  }
+  .switch input:checked + span{background:#123c33;border-color:#1f6b58}
+  .switch input:checked + span::after{transform:translateX(16px);background:var(--accent)}
+  .switch input:disabled + span{opacity:.4;cursor:not-allowed}
+
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px 8px;text-align:left;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+  th{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:#ffffff05}
+  .mono{font-family:ui-monospace,Consolas,monospace}
+  .muted{color:var(--muted)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:#4a5570}
+  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  .toolbar input[type=search]{max-width:280px}
+  #devBody td:nth-child(n+5), #tab-dev th:nth-child(n+5){width:64px;min-width:64px;white-space:nowrap}
+  #tab-dev th:nth-child(n+5){text-align:center}
+  #devBody td:nth-child(1){width:92px;white-space:nowrap}
+  #devBody td:nth-child(4){white-space:nowrap}
+  .empty{padding:30px;text-align:center;color:var(--muted)}
+  .toast{
+    position:fixed;bottom:24px;right:24px;background:#132033;border:1px solid var(--border);
+    border-left:3px solid var(--accent);padding:12px 18px;border-radius:10px;
+    box-shadow:0 10px 30px #0008;opacity:0;transform:translateY(10px);
+    transition:.25s;pointer-events:none;z-index:50;max-width:380px;
+  }
+  .toast.show{opacity:1;transform:none}
+  .toast.err{border-left-color:var(--danger)}
+  .hidden{display:none !important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">🔔</div>
+    <h1>Уведомления</h1>
+    <span class="badge" id="tgBadge">Telegram не настроен</span>
+    <span class="spacer"></span>
+    <button class="icon" onclick="load(true)">Обновить</button>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="tg" onclick="showTab('tg')">Telegram</button>
+    <button class="tab" data-tab="dev" onclick="showTab('dev')">Устройства</button>
+  </div>
+
+  <!-- ================= TELEGRAM ================= -->
+  <div id="tab-tg">
+    <section class="card">
+      <h2>Бот Telegram <span>токен и получатель</span></h2>
+      <div class="row2">
+        <div class="field">
+          <label>Токен бота (от @BotFather)</label>
+          <input type="password" id="cfgToken" placeholder="123456789:AA...">
+        </div>
+        <div class="field">
+          <label>Chat ID</label>
+          <input type="text" id="cfgChat" placeholder="123456789 или -100...">
+        </div>
+      </div>
+      <div class="hint">
+        Создайте бота у <code>@BotFather</code> → команда <code>/newbot</code>. Затем напишите боту любое сообщение
+        и узнайте <code>chat_id</code> (например, через <code>@userinfobot</code>). Для группы chat_id начинается с <code>-100</code>.
+      </div>
+      <div class="toolbar" style="margin-top:16px;margin-bottom:0">
+        <button class="primary" onclick="saveSettings()">Сохранить</button>
+        <button class="blue" onclick="testTg()">Отправить тест</button>
+        <button class="icon" onclick="toggleToken()" id="btnReveal">Показать токен</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Что присылать</h2>
+
+      <div class="notify-group">
+        <h3>ИБП</h3>
+        <div class="switch-row">
+          <div class="lbl">🔌 Переход на батарею<small>Пропало питание</small></div>
+          <label class="switch"><input type="checkbox" id="ups_onbatt"><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="lbl">⚡ Питание восстановлено<small>ИБП снова работает от сети</small></div>
+          <label class="switch"><input type="checkbox" id="ups_online"><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="lbl">🪫 Низкий заряд<small>Критический уровень батареи</small></div>
+          <label class="switch"><input type="checkbox" id="ups_lowbatt"><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="lbl">⛔ Принудительное выключение<small>FSD — система готовится к shutdown</small></div>
+          <label class="switch"><input type="checkbox" id="ups_fsd"><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="lbl">⚠️ Потеряна связь с ИБП<small>COMMBAD</small></div>
+          <label class="switch"><input type="checkbox" id="ups_commbad"><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="lbl">✅ Связь с ИБП восстановлена<small>COMMOK</small></div>
+          <label class="switch"><input type="checkbox" id="ups_commok"><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="lbl">💤 Выключение системы<small>Команда shutdown от NUT</small></div>
+          <label class="switch"><input type="checkbox" id="ups_shutdown"><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="lbl">🔋 Пора заменить батарею<small>REPLBATT</small></div>
+          <label class="switch"><input type="checkbox" id="ups_replbatt"><span></span></label>
+        </div>
+      </div>
+
+      <div class="notify-group">
+        <h3>Устройства сети</h3>
+        <div class="switch-row">
+          <div class="lbl">🟢 Устройство подключилось<small>Для отмеченных галочкой «Следить»</small></div>
+          <label class="switch"><input type="checkbox" id="net_online"><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="lbl">🔴 Устройство отключилось<small>Пропало из сети более чем на минуту</small></div>
+          <label class="switch"><input type="checkbox" id="net_offline"><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="lbl">🆕 Новое устройство в сети<small>MAC, IP и имя — при появлении нового устройства (скан раз в 5 минут)</small></div>
+          <label class="switch"><input type="checkbox" id="net_new_device"><span></span></label>
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-top:16px;margin-bottom:0">
+        <button class="primary" onclick="saveSettings()">Сохранить настройки</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ================= DEVICES ================= -->
+  <div id="tab-dev" class="hidden">
+    <section class="card">
+      <h2>Устройства в сети <span>отметьте те, за которыми следить</span></h2>
+      <div class="toolbar">
+        <button class="blue" onclick="scan()">Сканировать сеть</button>
+        <input type="search" id="devSearch" placeholder="Поиск по имени, IP или MAC" oninput="renderDevices()">
+        <span class="badge" id="devCount">—</span>
+        <span class="spacer"></span>
+        <span class="muted" id="scanTime"></span>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>В сети</th><th>Имя</th><th>IP</th><th>MAC</th>
+              <th style="text-align:center">Следить</th>
+              <th style="text-align:center">Вкл.</th>
+              <th style="text-align:center">Выкл.</th>
+            </tr>
+          </thead>
+          <tbody id="devBody">
+            <tr><td colspan="7" class="empty">Загрузка…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="hint">
+        «Вкл./Выкл.» — присылать ли уведомление о подключении и отключении этого устройства.
+        Проверка выполняется раз в минуту; отключение фиксируется после двух неудачных проверок подряд.
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/cgi-bin/netmon';
+let state = null;
+let formTouched = false;
+let tokenVisible = false;
+
+function toast(msg, err){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(() => t.className = 'toast', 3800);
+}
+
+async function api(action, opts = {}){
+  const url = API + '?action=' + encodeURIComponent(action) +
+    (opts.query ? '&' + opts.query : '');
+  const init = { credentials: 'same-origin', cache: 'no-store' };
+  if (opts.body !== undefined){
+    init.method = 'POST';
+    init.headers = { 'Content-Type': 'application/json' };
+    init.body = JSON.stringify(opts.body);
+  }
+  const r = await fetch(url, init);
+  let j;
+  try { j = await r.json(); } catch(e){ throw new Error('Ошибка ответа сервера (' + r.status + ')'); }
+  if (!r.ok || !j.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+  return j.data;
+}
+
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.getElementById('tab-tg').classList.toggle('hidden', name !== 'tg');
+  document.getElementById('tab-dev').classList.toggle('hidden', name !== 'dev');
+}
+
+function applySettings(s){
+  if (formTouched) return;
+  document.getElementById('cfgToken').value = s.token || '';
+  document.getElementById('cfgChat').value = s.chat_id || '';
+  ['ups_onbatt','ups_online','ups_lowbatt','ups_fsd','ups_commbad','ups_commok',
+   'ups_shutdown','ups_replbatt','net_online','net_offline','net_new_device'].forEach(k => {
+    const el = document.getElementById(k);
+    if (el) el.checked = s[k] !== false;
+  });
+  const configured = !!(s.token && s.chat_id);
+  const b = document.getElementById('tgBadge');
+  b.className = 'badge ' + (configured ? 'ok' : 'warn');
+  b.textContent = configured ? 'Telegram настроен' : 'Telegram не настроен';
+}
+
+function deviceRow(d){
+  const on = !!d.online;
+  const w = !!d.watch;
+  return `<tr data-mac="${esc(d.mac)}">
+    <td><span class="dot ${on ? 'on' : ''}"></span><span class="muted">${on ? 'онлайн' : 'офлайн'}</span></td>
+    <td>${d.name ? esc(d.name) : '<span class="muted">—</span>'}</td>
+    <td class="mono">${esc(d.ip)}</td>
+    <td class="mono muted">${esc(d.mac)}</td>
+    <td style="text-align:center"><label class="switch"><input type="checkbox" ${w ? 'checked' : ''} onchange="toggleDev(this)"><span></span></label></td>
+    <td style="text-align:center"><label class="switch"><input type="checkbox" ${d.notify_online !== false ? 'checked' : ''} ${w ? '' : 'disabled'} onchange="toggleDev(this)"><span></span></label></td>
+    <td style="text-align:center"><label class="switch"><input type="checkbox" ${d.notify_offline !== false ? 'checked' : ''} ${w ? '' : 'disabled'} onchange="toggleDev(this)"><span></span></label></td>
+  </tr>`;
+}
+
+function filteredDevices(){
+  const q = (document.getElementById('devSearch').value || '').trim().toLowerCase();
+  let list = (state?.devices || []).slice();
+  if (q) list = list.filter(d =>
+    (d.name || '').toLowerCase().includes(q) ||
+    (d.ip || '').includes(q) ||
+    (d.mac || '').toLowerCase().includes(q));
+  return list;
+}
+
+function renderDevices(){
+  const list = filteredDevices();
+  const all = state?.devices || [];
+  document.getElementById('devCount').textContent =
+    'в сети: ' + all.filter(d => d.online).length + ' из ' + all.length;
+  const ts = state?.scanned_at || 0;
+  document.getElementById('scanTime').textContent = ts
+    ? 'скан: ' + new Date(ts * 1000).toLocaleTimeString('ru-RU')
+    : '';
+
+  const body = document.getElementById('devBody');
+  if (!list.length){
+    body.innerHTML = '<tr><td colspan="7" class="empty">Устройства не найдены</td></tr>';
+    return;
+  }
+  list.sort((a, b) => (a.ip || '').localeCompare(b.ip || '', undefined, {numeric: true}));
+  body.innerHTML = list.map(deviceRow).join('');
+}
+
+async function load(silent){
+  try{
+    const d = await api('status');
+    state = d;
+    applySettings(d.settings || {});
+    renderDevices();
+  }catch(e){
+    if (!silent) toast('Не удалось загрузить: ' + e.message, true);
+  }
+}
+
+async function scan(){
+  try{
+    toast('Сканирую сеть…');
+    const d = await api('status', { query: 'force=1' });
+    state = d;
+    applySettings(d.settings || {});
+    renderDevices();
+    toast('Сканирование завершено');
+  }catch(e){ toast('Ошибка сканирования: ' + e.message, true); }
+}
+
+async function saveSettings(){
+  const body = {
+    token: document.getElementById('cfgToken').value.trim(),
+    chat_id: document.getElementById('cfgChat').value.trim()
+  };
+  ['ups_onbatt','ups_online','ups_lowbatt','ups_fsd','ups_commbad','ups_commok',
+   'ups_shutdown','ups_replbatt','net_online','net_offline','net_new_device'].forEach(k => {
+    body[k] = document.getElementById(k).checked;
+  });
+  try{
+    const s = await api('save', { body });
+    formTouched = false;
+    applySettings(s);
+    toast('Настройки сохранены');
+  }catch(e){ toast('Ошибка: ' + e.message, true); }
+}
+
+async function testTg(){
+  try{
+    toast('Отправляю тестовое сообщение…');
+    await api('test', { body: {} });
+    toast('Тестовое сообщение отправлено');
+  }catch(e){ toast('Ошибка Telegram: ' + e.message, true); }
+}
+
+function toggleToken(){
+  const el = document.getElementById('cfgToken');
+  tokenVisible = !tokenVisible;
+  el.type = tokenVisible ? 'text' : 'password';
+  document.getElementById('btnReveal').textContent = tokenVisible ? 'Скрыть токен' : 'Показать токен';
+}
+
+async function toggleDev(cb){
+  const tr = cb.closest('tr');
+  const mac = tr.dataset.mac;
+  const dev = (state?.devices || []).find(d => d.mac === mac);
+  if (!dev) return;
+
+  const boxes = tr.querySelectorAll('input[type=checkbox]');
+  const watch = boxes[0].checked;
+  const non = boxes[1].checked;
+  const noff = boxes[2].checked;
+
+  boxes[1].disabled = !watch;
+  boxes[2].disabled = !watch;
+
+  try{
+    await api('device', { body: {
+      mac: dev.mac, ip: dev.ip, name: dev.name || '',
+      watch: watch, notify_online: non, notify_offline: noff
+    }});
+    dev.watch = watch;
+    dev.notify_online = non;
+    dev.notify_offline = noff;
+    toast(watch ? 'Устройство добавлено в отслеживаемые' : 'Устройство больше не отслеживается');
+  }catch(e){
+    cb.checked = !cb.checked;
+    toast('Ошибка: ' + e.message, true);
+  }
+}
+
+['cfgToken','cfgChat'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', () => { formTouched = true; });
+});
+
+load();
+setInterval(() => load(true), 30000);
+</script>
+</body>
+</html>

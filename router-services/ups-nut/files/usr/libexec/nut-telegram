@@ -1,0 +1,54 @@
+#!/bin/sh
+# NOTIFYCMD для upsmon: события ИБП -> Telegram
+# Текст сообщения NUT передаёт в stdin (или первым аргументом)
+
+S=/etc/netmon/settings.json
+[ -f "$S" ] || exit 0
+
+MSG_TEXT=""
+if [ -n "$1" ]; then
+    MSG_TEXT="$1"
+else
+    MSG_TEXT=$(cat)
+fi
+
+TYPE=${NOTIFYTYPE:-}
+case "$TYPE" in
+    ONLINE)    flag=ups_online;    icon="⚡"; text="Питание восстановлено — ИБП снова работает от сети" ;;
+    ONBATT)    flag=ups_onbatt;    icon="🔌"; text="Пропало питание — ИБП перешёл на батарею" ;;
+    LOWBATT)   flag=ups_lowbatt;   icon="🪫"; text="Низкий заряд батареи ИБП" ;;
+    FSD)       flag=ups_fsd;       icon="⛔"; text="Принудительное выключение (FSD)" ;;
+    COMMBAD)   flag=ups_commbad;   icon="⚠️"; text="Потеряна связь с ИБП" ;;
+    COMMOK)    flag=ups_commok;    icon="✅"; text="Связь с ИБП восстановлена" ;;
+    SHUTDOWN)  flag=ups_shutdown;  icon="💤"; text="Система выключается по команде ИБП" ;;
+    REPLBATT)  flag=ups_replbatt;  icon="🔋"; text="Пора заменить батарею ИБП" ;;
+    *) exit 0 ;;
+esac
+
+enabled=$(jq -r --arg f "$flag" '.[$f] // true' "$S" 2>/dev/null)
+[ "$enabled" = "true" ] || exit 0
+
+MSG="$icon $text"
+
+charge=$(upsc ups battery.charge 2>/dev/null)
+runtime=$(upsc ups battery.runtime 2>/dev/null)
+load=$(upsc ups ups.load 2>/dev/null)
+
+if [ -n "$charge" ]; then
+    MSG="$MSG
+Заряд: ${charge}%"
+fi
+if [ -n "$runtime" ] && [ "$runtime" -gt 0 ] 2>/dev/null; then
+    MSG="$MSG · автономия: $((runtime / 60)) мин"
+fi
+if [ -n "$load" ]; then
+    MSG="$MSG
+Нагрузка: ${load}%"
+fi
+
+HOST=$(uci -q get system.@system[0].hostname)
+[ -n "$HOST" ] && MSG="$MSG
+Роутер: $HOST"
+
+logger -t nut-telegram "$TYPE: $text"
+/usr/libexec/notify-tg "$MSG"

@@ -1,0 +1,127 @@
+#!/bin/sh
+# ups-admin backend: CGI API для страницы мониторинга ИБП (NUT)
+# Авторизация: Basic root/<пароль root> либо Authorization: Bearer <api.key>
+
+BASE=/etc/upsadmin
+UPS=ups
+UPSHOST=127.0.0.1
+
+hdr() { printf 'Content-Type: application/json; charset=utf-8\nCache-Control: no-store\n\n'; }
+json_out() { hdr; printf '%s\n' "$1"; }
+json_ok()  { json_out "{\"ok\":true,\"data\":$1}"; }
+json_err() { printf 'Status: %s\nContent-Type: application/json; charset=utf-8\nCache-Control: no-store\n\n{"ok":false,"error":"%s"}\n' "$1" "$2"; exit 0; }
+
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+check_auth() {
+    case "$HTTP_AUTHORIZATION" in
+        Bearer\ *)
+            if [ -s "$BASE/api.key" ] && \
+               [ "${HTTP_AUTHORIZATION#Bearer }" = "$(cat "$BASE/api.key")" ]; then
+                return 0
+            fi
+            return 1
+            ;;
+    esac
+
+    [ -n "$HTTP_AUTHORIZATION" ] || return 1
+    cred=$(printf '%s' "$HTTP_AUTHORIZATION" | sed 's/^Basic //')
+    decoded=$(printf '%s' "$cred" | base64 -d 2>/dev/null) || return 1
+    user=${decoded%%:*}
+    pass=${decoded#*:}
+    [ "$user" = "root" ] || return 1
+
+    hash=$(awk -F: '$1=="root"{print $2}' /etc/shadow)
+    case "$hash" in
+        \$6\$*) algo="-6" ;;
+        \$5\$*) algo="-5" ;;
+        \$1\$*) algo="-1" ;;
+        *) return 1 ;;
+    esac
+    salt=$(printf '%s' "$hash" | cut -d'$' -f3)
+    calc=$(openssl passwd "$algo" -salt "$salt" "$pass" 2>/dev/null)
+    [ "$calc" = "$hash" ]
+}
+
+# ---------- request parsing ----------
+QS="$QUERY_STRING"
+ACTION=$(printf '%s' "$QS" | sed -n 's/.*action=\([^&]*\).*/\1/p' | head -1)
+[ -z "$ACTION" ] && ACTION=ui
+
+BODY=""
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    CLEN=${CONTENT_LENGTH:-0}
+    case "$CLEN" in ''|*[!0-9]*) CLEN=0 ;; esac
+    [ "$CLEN" -gt 0 ] && BODY=$(dd bs=1 count="$CLEN" 2>/dev/null)
+fi
+
+if ! check_auth; then
+    printf 'Status: 401 Unauthorized\nWWW-Authenticate: Basic realm="ups-admin"\nContent-Type: text/plain; charset=utf-8\nCache-Control: no-store\n\n401 Unauthorized\n'
+    exit 0
+fi
+
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    case "$CONTENT_TYPE" in
+        application/json*) ;;
+        *) json_err "415 Unsupported Media Type" "application/json required" ;;
+    esac
+fi
+
+case "$ACTION" in
+ui)
+    printf 'Content-Type: text/html; charset=utf-8\nCache-Control: no-store\n\n'
+    cat /www/ups/index.html
+    ;;
+
+status)
+    raw=$(upsc "$UPS@$UPSHOST" 2>/dev/null)
+    if [ -z "$raw" ]; then
+        json_ok "$(jq -n -c --argjson ts "$(date +%s)" \
+            '{connected:false, vars:{}, events:[], timestamp:$ts}')"
+        exit 0
+    fi
+
+    vars=$(printf '%s\n' "$raw" | jq -R -s '
+        split("\n")
+        | map(select(length > 0) | split(": ")
+              | select(length >= 2)
+              | {key: .[0], value: (.[1:] | join(": "))})
+        | from_entries' 2>/dev/null)
+    [ -z "$vars" ] && vars='{}'
+
+    events=$(logread 2>/dev/null | grep -iE 'upsmon|usbhid|upsd' \
+        | grep -viE '\[D[0-9]+\]|debug level|upsnotify|SIGPIPE|foreground process|listen|mainloop|become_user|chdired|Found [0-9]+ UPS|server_load|no notification|QUIET_INIT|still not connected|trying to reconnect|Can.t connect to UPS' \
+        | tail -25 \
+        | jq -R -s 'split("\n") | map(select(length>0))' 2>/dev/null)
+    [ -z "$events" ] && events='[]'
+
+    json_ok "$(jq -n -c --argjson vars "$vars" --argjson events "$events" \
+        --argjson ts "$(date +%s)" \
+        '{connected:true, vars:$vars, events:$events, timestamp:$ts}')"
+    ;;
+
+cmd)
+    [ "$REQUEST_METHOD" = "POST" ] || json_err "405 Method Not Allowed" "POST required"
+    cmd=$(printf '%s' "$BODY" | jq -r '.cmd // empty' 2>/dev/null)
+    case "$cmd" in
+        test.battery.start|beeper.toggle) ;;
+        *) json_err "400 Bad Request" "unknown command" ;;
+    esac
+
+    user=$(uci -q get nut_server.monuser.username)
+    pass=$(uci -q get nut_server.monuser.password)
+    [ -n "$user" ] && [ -n "$pass" ] || json_err "500 Internal Error" "nut credentials not found"
+
+    out=$(upscmd -u "$user" -p "$pass" "$UPS" "$cmd" 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        json_err "500 Internal Error" "$(json_escape "$out")"
+    fi
+    logger -t upsadmin "command: $cmd"
+    json_ok "$(jq -n -c --arg out "$out" '{output:$out}')"
+    ;;
+
+*)
+    json_err "404 Not Found" "unknown action"
+    ;;
+esac

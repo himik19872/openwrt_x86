@@ -218,15 +218,42 @@ http://192.168.1.1:1984
 
 ---
 
+## 🧰 Дополнительные сервисы роутера
+
+Кроме домофонии в репозитории есть набор модулей для повседневной эксплуатации роутера — VPN, контроль ИБП, уведомления, GPS-трекинг и управление доменом с поддоменами.
+
+📁 Подробности и установка: **[`router-services/`](router-services/README.md)**
+
+| Модуль | Что делает | Интерфейс |
+|---|---|---|
+| [**wireguard**](router-services/wireguard/) | WireGuard-сервер + панель: клиенты, QR-коды, `.conf`, вкл/выкл | `http://<router>/wgadmin/` |
+| [**ups-nut**](router-services/ups-nut/) | NUT + панель ИБП: заряд, автономия, тест батареи, Telegram | `/cgi-bin/upsadmin?action=ui` |
+| [**notify-netmon**](router-services/notify-netmon/) | Telegram-уведомления + мониторинг устройств сети | `/cgi-bin/netmon?action=ui` |
+| [**traccar**](router-services/traccar/) | Traccar в Docker + HTTPS через nginx | `:8082`, `https://<domain>:8445` |
+| [**dns-domains**](router-services/dns-domains/) | Поддомены DuckDNS wildcard + nginx + dnsmasq + TLS | `https://<sub>.<domain>/` |
+| [**common**](router-services/common/) | nginx, карточки LuCI, **фикс hairpin NAT (br_netfilter от Docker)** | LuCI → Сервисы |
+
+Быстрый старт:
+
+```bash
+cd /root/openwrt_x86/router-services
+sh wireguard/install.sh && sh ups-nut/install.sh && sh notify-netmon/install.sh
+sh traccar/install.sh && sh dns-domains/install.sh && sh common/install.sh
+```
+
+> ⚠️ Если Docker установлен, пробросы портов перестают работать из локальной сети (hairpin NAT) — причина и исправление в [`docs/TROUBLESHOOTING.md`](router-services/docs/TROUBLESHOOTING.md#1-пробросы-портов-dnat-не-работают-из-локальной-сети-а-из-интернета-работают).
+
+---
+
 ## 🚀 TODO / Планы
 
 - [ ] Видео-запись звонков (захват RTP H264)
 - [ ] Группы звонков (Ring Groups) через веб-интерфейс
 - [ ] Голосовая почта через веб-интерфейс
-- [ ] Telegram-уведомления о звонках
-- [ ] Интеграция с Home Assistant через MQTT
-- [ ] WireGuard Manager — управление клиентами
-- [ ] ARP Scan — LuCI страница
+- [x] Telegram-уведомления о звонках
+- [x] Интеграция с Home Assistant через MQTT
+- [x] WireGuard Manager — управление клиентами
+- [x] ARP Scan — LuCI страница
 
 ---
 

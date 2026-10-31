@@ -1,0 +1,63 @@
+#!/bin/sh
+# Проверка устройств сети (cron раз в минуту)
+# Отправляет уведомления при появлении/пропадании отслеживаемых устройств
+
+DEV=/etc/netmon/devices.json
+SET=/etc/netmon/settings.json
+STATE=/tmp/netmon-state.json
+LOCK=/tmp/netmon-check.lock
+
+[ -f "$DEV" ] || exit 0
+[ -f "$SET" ] || exit 0
+
+mkdir "$LOCK" 2>/dev/null || exit 0
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
+[ -f "$STATE" ] || echo '{}' > "$STATE"
+
+notify_online=$(jq -r '.net_online // true' "$SET" 2>/dev/null)
+notify_offline=$(jq -r '.net_offline // true' "$SET" 2>/dev/null)
+
+jq -r '.devices[] | select(.watch == true) | [.mac, .ip, .name] | @tsv' "$DEV" 2>/dev/null \
+| while IFS="$(printf '\t')" read -r mac ip name; do
+    [ -n "$mac" ] || continue
+    [ -n "$ip" ] || continue
+
+    online=false
+    if arping -c 1 -w 1 -q -I br-lan "$ip" >/dev/null 2>&1; then
+        online=true
+    elif ping -c 1 -W 1 -q "$ip" >/dev/null 2>&1; then
+        online=true
+    fi
+
+    prev=$(jq -r --arg mac "$mac" '.[$mac].online' "$STATE" 2>/dev/null)
+    fails=$(jq -r --arg mac "$mac" '.[$mac].fails // 0' "$STATE" 2>/dev/null)
+    case "$prev" in ''|null) prev="none" ;; esac
+    case "$fails" in ''|*[!0-9]*) fails=0 ;; esac
+
+    label="${name:-$ip}"
+
+    if [ "$online" = "true" ]; then
+        if [ "$prev" = "false" ] && [ "$notify_online" = "true" ]; then
+            /usr/libexec/notify-tg "🟢 Устройство ${label} (${ip}) подключилось к сети"
+            logger -t netmon "online: ${label} ${ip}"
+        fi
+        prev="true"
+        fails=0
+    else
+        fails=$((fails + 1))
+        if [ "$prev" = "true" ] && [ "$fails" -ge 2 ]; then
+            if [ "$notify_offline" = "true" ]; then
+                /usr/libexec/notify-tg "🔴 Устройство ${label} (${ip}) отключилось от сети"
+                logger -t netmon "offline: ${label} ${ip}"
+            fi
+            prev="false"
+        elif [ "$prev" = "none" ]; then
+            prev="false"
+        fi
+    fi
+
+    jq --arg mac "$mac" --argjson on "$([ "$prev" = "true" ] && echo true || echo false)" \
+       --argjson f "$fails" '.[$mac] = {online: $on, fails: $f}' \
+       "$STATE" > "$STATE.tmp" 2>/dev/null && mv "$STATE.tmp" "$STATE"
+done

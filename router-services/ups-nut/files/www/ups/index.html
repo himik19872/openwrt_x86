@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ИБП — мониторинг</title>
+<style>
+  :root{
+    --bg:#0f1420; --card:#171e2e; --card2:#1e273a; --border:#2a3550;
+    --text:#e6ecf7; --muted:#8b98b3; --accent:#00d3a7; --accent2:#2f81f7;
+    --danger:#ff5572; --warn:#ffb020; --ok:#33d17a; --info:#4aa8ff;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:radial-gradient(1200px 600px at 20% -10%,#1b2b45 0%,var(--bg) 55%);
+    color:var(--text); font:14px/1.5 -apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif;
+    min-height:100vh; padding:24px;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px}
+  header h1{font-size:22px;margin:0;letter-spacing:.3px}
+  header .logo{
+    width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--warn),#ff7a45);color:#241204;font-weight:800;font-size:18px;
+  }
+  .badge{
+    padding:4px 11px;border-radius:999px;font-size:12px;border:1px solid var(--border);
+    background:var(--card);color:var(--muted);display:inline-flex;align-items:center;gap:6px;
+  }
+  .badge.ok{color:var(--ok);border-color:#235c42;background:#10281f}
+  .badge.warn{color:var(--warn);border-color:#5c4723;background:#2a2112}
+  .badge.danger{color:var(--danger);border-color:#5c2333;background:#2a1219}
+  .badge.info{color:var(--info);border-color:#23405c;background:#12212a}
+  .spacer{flex:1}
+  .grid{display:grid;grid-template-columns:1.15fr 1fr;gap:18px;margin-bottom:18px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{
+    background:linear-gradient(180deg,var(--card),#141a29);border:1px solid var(--border);
+    border-radius:var(--radius);padding:18px 20px;
+  }
+  .card h2{font-size:15px;margin:0 0 14px;font-weight:600;letter-spacing:.2px}
+  .card h2 span{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+  button{
+    cursor:pointer;font:inherit;border-radius:9px;border:1px solid var(--border);
+    background:var(--card2);color:var(--text);padding:9px 14px;transition:.15s;
+  }
+  button:hover{filter:brightness(1.15)}
+  button.primary{background:linear-gradient(135deg,var(--accent),#00b28d);border:0;color:#04231b;font-weight:700}
+  button.blue{background:linear-gradient(135deg,var(--accent2),#1f65c9);border:0;color:#fff;font-weight:600}
+  button.warn{background:linear-gradient(135deg,var(--warn),#ff8a3d);border:0;color:#241204;font-weight:700}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.icon{padding:7px 11px;font-size:12px;background:transparent;border-color:var(--border);color:var(--muted)}
+  button.icon:hover{color:var(--text);border-color:var(--accent2)}
+
+  /* battery */
+  .hero-top{display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+  .battery-box{display:flex;align-items:center;gap:6px}
+  .battery{
+    position:relative;width:150px;height:66px;border:3px solid var(--border);
+    border-radius:10px;padding:5px;background:#0c1220;
+  }
+  .battery::after{
+    content:"";position:absolute;right:-11px;top:50%;transform:translateY(-50%);
+    width:8px;height:24px;border-radius:0 4px 4px 0;background:var(--border);
+  }
+  .battery .level{
+    height:100%;border-radius:5px;transition:width .6s ease,background .4s;
+    background:linear-gradient(90deg,#00b28d,#33d17a);width:0%;
+  }
+  .battery .level.warn{background:linear-gradient(90deg,#e09000,#ffb020)}
+  .battery .level.danger{background:linear-gradient(90deg,#c8233f,#ff5572)}
+  .battery .bolt{
+    position:absolute;inset:0;display:grid;place-items:center;font-size:22px;
+    text-shadow:0 2px 8px #0008;pointer-events:none;opacity:.85;
+  }
+  .charge{font-size:46px;font-weight:700;line-height:1;letter-spacing:-1px}
+  .charge small{font-size:20px;font-weight:500;color:var(--muted);margin-left:2px}
+  .hero-status{font-size:17px;font-weight:600;margin-top:14px}
+  .hero-status .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px}
+  .hero-sub{color:var(--muted);font-size:13px;margin-top:4px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+  .chip{
+    font-size:11px;letter-spacing:.4px;padding:3px 8px;border-radius:6px;
+    border:1px solid var(--border);color:var(--muted);background:#0d1320;font-family:ui-monospace,Consolas,monospace;
+  }
+  .chip.on{color:var(--accent);border-color:#1d5245;background:#0e211d}
+  .chip.bad{color:var(--danger);border-color:#5c2333;background:#2a1219}
+  .chip.warn{color:var(--warn);border-color:#5c4723;background:#2a2112}
+
+  #spark{width:100%;height:90px;margin-top:16px;display:block}
+  .spark-legend{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:4px}
+  .spark-legend i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:10px 16px;font-size:13px}
+  .kv .k{color:var(--muted)}
+  .kv .v{font-family:ui-monospace,Consolas,monospace;word-break:break-all}
+  .volt-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:520px){.volt-grid{grid-template-columns:1fr}}
+  .metric{background:#0d1320;border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .metric .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .metric .val{font-size:24px;font-weight:600;margin-top:4px;font-family:ui-monospace,Consolas,monospace}
+  .metric .val small{font-size:12px;color:var(--muted);margin-left:3px;font-weight:400}
+  .bar{height:6px;border-radius:3px;background:#0a0f18;border:1px solid var(--border);margin-top:8px;overflow:hidden}
+  .bar > i{display:block;height:100%;background:linear-gradient(90deg,#2f81f7,#4aa8ff);width:0;transition:width .6s}
+  .bar.warn > i{background:linear-gradient(90deg,#e09000,#ffb020)}
+
+  .actions{display:flex;flex-direction:column;gap:10px}
+  .actions .row2{display:flex;gap:10px;flex-wrap:wrap}
+  .hint{font-size:12px;color:var(--muted);margin-top:12px}
+
+  .log{
+    max-height:250px;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:12px;
+    background:#0b101a;border:1px solid var(--border);border-radius:10px;padding:10px 12px;
+  }
+  .log div{padding:3px 0;border-bottom:1px dashed #1c2537;white-space:pre-wrap;word-break:break-word;color:#b6c2d8}
+  .log div:last-child{border-bottom:0}
+  .log .ev-onbatt{color:var(--warn)}
+  .log .ev-low{color:var(--danger)}
+  .log .ev-ok{color:var(--ok)}
+  .empty{padding:24px;text-align:center;color:var(--muted)}
+  .offline{
+    background:#2a1219;border:1px solid #5c2333;color:#ffb3c0;border-radius:10px;
+    padding:12px 16px;margin-bottom:16px;display:none;
+  }
+  .toast{
+    position:fixed;bottom:24px;right:24px;background:#132033;border:1px solid var(--border);
+    border-left:3px solid var(--accent);padding:12px 18px;border-radius:10px;
+    box-shadow:0 10px 30px #0008;opacity:0;transform:translateY(10px);
+    transition:.25s;pointer-events:none;z-index:50;max-width:360px;
+  }
+  .toast.show{opacity:1;transform:none}
+  .toast.err{border-left-color:var(--danger)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">⚡</div>
+    <h1>ИБП</h1>
+    <span class="badge" id="mainBadge"><span id="badgeText">проверка…</span></span>
+    <span class="spacer"></span>
+    <button class="icon" onclick="load()">Обновить</button>
+  </header>
+
+  <div class="offline" id="offline">Сервер NUT недоступен — драйвер или <code>upsd</code> не запущены. Проверьте: <code>/etc/init.d/nut-server status</code></div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Состояние <span id="devModel">—</span></h2>
+      <div class="hero-top">
+        <div class="battery-box">
+          <div class="battery"><div class="level" id="batLevel"></div><div class="bolt" id="batBolt"></div></div>
+        </div>
+        <div>
+          <div class="charge"><span id="chargeVal">—</span><small>%</small></div>
+          <div class="hero-status" id="statusText">—</div>
+          <div class="hero-sub" id="runtimeText">—</div>
+        </div>
+      </div>
+      <div class="chips" id="statusChips"></div>
+      <svg id="spark" viewBox="0 0 320 90" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="gCharge" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#33d17a" stop-opacity=".22"/>
+            <stop offset="100%" stop-color="#33d17a" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <g id="gridLines"></g>
+        <path id="areaCharge" fill="url(#gCharge)" stroke="none"></path>
+        <polyline id="lineCharge" fill="none" stroke="#33d17a" stroke-width="2" stroke-linejoin="round"></polyline>
+        <polyline id="lineLoad" fill="none" stroke="#ffb020" stroke-width="1.6" stroke-dasharray="4 3" stroke-linejoin="round"></polyline>
+      </svg>
+      <div class="spark-legend">
+        <span><i style="background:#33d17a"></i>заряд, %</span>
+        <span><i style="background:#ffb020"></i>нагрузка, %</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Электрика</h2>
+      <div class="volt-grid">
+        <div class="metric">
+          <div class="lbl">Вход</div>
+          <div class="val" id="inVolt">—<small>В</small></div>
+          <div class="hint" id="inFreq">—</div>
+        </div>
+        <div class="metric">
+          <div class="lbl">Выход</div>
+          <div class="val" id="outVolt">—<small>В</small></div>
+          <div class="hint" id="outFreq">—</div>
+        </div>
+        <div class="metric">
+          <div class="lbl">Нагрузка</div>
+          <div class="val" id="loadVal">—<small>%</small></div>
+          <div class="bar"><i id="loadBar"></i></div>
+        </div>
+        <div class="metric">
+          <div class="lbl">Батарея</div>
+          <div class="val" id="batVolt">—<small>В</small></div>
+          <div class="hint" id="batType">—</div>
+        </div>
+      </div>
+      <div class="hint" id="transferHint">—</div>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Устройство</h2>
+      <div class="kv">
+        <div class="k">Производитель</div><div class="v" id="devMfr">—</div>
+        <div class="k">Модель</div><div class="v" id="devModel2">—</div>
+        <div class="k">Серийный номер</div><div class="v" id="devSerial">—</div>
+        <div class="k">Мощность</div><div class="v" id="devPower">—</div>
+        <div class="k">Драйвер</div><div class="v" id="devDriver">—</div>
+        <div class="k">Результат теста</div><div class="v" id="devTest">—</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Действия</h2>
+      <div class="actions">
+        <div class="row2">
+          <button class="blue" id="btnTest" onclick="runCmd('test.battery.start')">Тест батареи</button>
+          <button id="btnBeep" onclick="runCmd('beeper.toggle')">Звук: —</button>
+        </div>
+        <div class="hint">
+          Тест батареи на несколько секунд переводит ИБП на питание от аккумулятора — это нормально.
+          Звук переключает сигнал ИБП при работе от батареи.
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Журнал <span>последние события NUT</span></h2>
+    <div class="log" id="log"><div class="empty">Загрузка…</div></div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/cgi-bin/upsadmin';
+let state = null;
+let history = [];
+const MAX_POINTS = 60;
+
+function toast(msg, err){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(() => t.className = 'toast', 3500);
+}
+
+async function api(action, opts = {}){
+  const init = { credentials: 'same-origin', cache: 'no-store' };
+  if (opts.body !== undefined){
+    init.method = 'POST';
+    init.headers = { 'Content-Type': 'application/json' };
+    init.body = JSON.stringify(opts.body);
+  }
+  const r = await fetch(API + '?action=' + encodeURIComponent(action), init);
+  let j;
+  try { j = await r.json(); } catch(e){ throw new Error('Ошибка ответа сервера (' + r.status + ')'); }
+  if (!r.ok || !j.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+  return j.data;
+}
+
+function num(v){ const n = parseFloat(v); return isFinite(n) ? n : null; }
+function fmtRuntime(sec){
+  sec = Math.round(Number(sec) || 0);
+  if (sec <= 0) return '—';
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h > 0 ? h + ' ч ' + String(m).padStart(2,'0') + ' мин' : m + ' мин';
+}
+function fmtTime(s){
+  const d = new Date(s);
+  return d.toLocaleTimeString('ru-RU');
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function statusInfo(vars){
+  const s = (vars['ups.status'] || '').split(/\s+/).filter(Boolean);
+  if (s.includes('LB')) return {cls:'danger', text:'Низкий заряд батареи', color:'#ff5572'};
+  if (s.includes('OB')) return {cls:'warn', text:'Работа от батареи', color:'#ffb020'};
+  if (s.includes('CAL')) return {cls:'info', text:'Калибровка', color:'#4aa8ff'};
+  if (s.includes('CHRG')) return {cls:'ok', text:'Питание от сети · зарядка', color:'#33d17a'};
+  if (s.includes('OL')) return {cls:'ok', text:'Питание от сети', color:'#33d17a'};
+  if (s.includes('OFF')) return {cls:'danger', text:'ИБП выключен', color:'#ff5572'};
+  return {cls:'', text:'Нет данных', color:'#8b98b3'};
+}
+
+function render(vars, connected){
+  const $ = id => document.getElementById(id);
+  const charge = num(vars['battery.charge']);
+  const runtime = num(vars['battery.runtime']);
+  const load = num(vars['ups.load']);
+  const st = statusInfo(vars);
+  const flags = (vars['ups.status'] || '').split(/\s+/).filter(Boolean);
+
+  // battery
+  const pct = charge === null ? 0 : Math.max(0, Math.min(100, charge));
+  const lvl = $('batLevel');
+  lvl.style.width = pct + '%';
+  lvl.className = 'level' + (flags.includes('LB') ? ' danger' : flags.includes('OB') ? ' warn' : '');
+  $('batBolt').textContent = flags.includes('OB') ? '🔋' : (flags.includes('CHRG') ? '⚡' : '');
+  $('chargeVal').textContent = charge === null ? '—' : Math.round(charge);
+  $('statusText').innerHTML = '<span class="dot" style="background:' + st.color + ';box-shadow:0 0 8px ' + st.color + '"></span>' + esc(st.text);
+  $('runtimeText').textContent = runtime ? 'Автономия ≈ ' + fmtRuntime(runtime) : '—';
+
+  // badge
+  const badge = $('mainBadge'), bt = $('badgeText');
+  badge.className = 'badge ' + (connected ? st.cls : 'danger');
+  bt.textContent = connected ? st.text : 'Нет связи с NUT';
+
+  // chips
+  $('statusChips').innerHTML = flags.map(f => {
+    const bad = ['LB','RB','ALARM','FSD','OFF','OVER'].includes(f);
+    const warn = ['OB','BYPASS','TRIM','BOOST','CAL'].includes(f);
+    return '<span class="chip ' + (bad ? 'bad' : warn ? 'warn' : 'on') + '">' + esc(f) + '</span>';
+  }).join('') || '<span class="chip">нет флагов</span>';
+
+  // electric
+  const inV = num(vars['input.voltage']), outV = num(vars['output.voltage']);
+  const inF = num(vars['input.frequency']), outF = num(vars['output.frequency']);
+  const bV = num(vars['battery.voltage']);
+  $('inVolt').innerHTML = (inV === null ? '—' : inV.toFixed(0)) + '<small>В</small>';
+  $('outVolt').innerHTML = (outV === null ? '—' : outV.toFixed(0)) + '<small>В</small>';
+  $('inFreq').textContent = inF === null ? '—' : inF.toFixed(1) + ' Гц';
+  $('outFreq').textContent = outF === null ? '—' : outF.toFixed(1) + ' Гц';
+  $('loadVal').innerHTML = (load === null ? '—' : Math.round(load)) + '<small>%</small>';
+  const lb = $('loadBar');
+  lb.style.width = (load === null ? 0 : Math.min(100, load)) + '%';
+  lb.parentElement.className = 'bar' + (load !== null && load > 70 ? ' warn' : '');
+  $('batVolt').innerHTML = (bV === null ? '—' : bV.toFixed(1)) + '<small>В</small>';
+  $('batType').textContent = vars['battery.type'] || '—';
+  const lo = vars['output.transfer.low'], hi = vars['output.transfer.high'];
+  $('transferHint').textContent = (lo && hi) ? 'Порог переключения на батарею: ' + lo + '–' + hi + ' В' : '';
+
+  // device
+  $('devModel').textContent = vars['ups.model'] || vars['device.model'] || '';
+  $('devModel2').textContent = vars['ups.model'] || vars['device.model'] || '—';
+  $('devMfr').textContent = vars['ups.mfr'] || vars['device.mfr'] || '—';
+  $('devSerial').textContent = (vars['ups.serial'] || vars['device.serial'] || '—').trim();
+  $('devPower').textContent = vars['ups.power.nominal'] ? vars['ups.power.nominal'] + ' ВА' : '—';
+  $('devDriver').textContent = (vars['driver.name'] || '—') + (vars['driver.version.data'] ? ' · ' + vars['driver.version.data'] : '');
+  $('devTest').textContent = vars['ups.test.result'] || '—';
+
+  // beeper button
+  const beep = vars['ups.beeper.status'];
+  const bb = $('btnBeep');
+  bb.textContent = beep === 'enabled' ? 'Звук: включён' : beep === 'disabled' ? 'Звук: выключен' : 'Звук: —';
+  bb.disabled = !connected;
+  $('btnTest').disabled = !connected;
+
+  // graph
+  if (connected && charge !== null){
+    history.push({ charge: pct, load: load === null ? 0 : Math.min(100, load) });
+    if (history.length > MAX_POINTS) history.shift();
+  }
+  drawSpark();
+
+  // log
+  renderLog(state ? state.events : []);
+}
+
+function drawSpark(){
+  const W = 320, H = 90, P = 4;
+  const y = v => H - P - (Math.max(0, Math.min(100, v)) / 100) * (H - 2 * P);
+  const n = history.length;
+  const x = i => n <= 1 ? P : P + (i / (n - 1)) * (W - 2 * P);
+  const pts = arr => arr.map((v, i) => x(i) + ',' + y(v).toFixed(1)).join(' ');
+
+  const charge = history.map(h => h.charge);
+  const load = history.map(h => h.load);
+  document.getElementById('lineCharge').setAttribute('points', pts(charge));
+  document.getElementById('lineLoad').setAttribute('points', pts(load));
+
+  if (n > 1){
+    const area = 'M' + x(0) + ',' + (H - P) + ' L' + pts(charge).replace(/ /g, ' L') + ' L' + x(n - 1) + ',' + (H - P) + ' Z';
+    document.getElementById('areaCharge').setAttribute('d', area);
+  } else {
+    document.getElementById('areaCharge').setAttribute('d', '');
+  }
+}
+
+function renderLog(events){
+  const box = document.getElementById('log');
+  if (!events || !events.length){
+    box.innerHTML = '<div class="empty">Событий пока нет</div>';
+    return;
+  }
+  box.innerHTML = events.map(line => {
+    let cls = '';
+    if (/ONBATT|on battery|OB/i.test(line)) cls = 'ev-onbatt';
+    if (/LOWBATT|low battery|FSD|LB/i.test(line)) cls = 'ev-low';
+    if (/ONLINE|power restored|OL CHRG|OL\b/i.test(line)) cls = 'ev-ok';
+    return '<div class="' + cls + '">' + esc(line) + '</div>';
+  }).join('');
+}
+
+async function load(){
+  try{
+    const d = await api('status');
+    state = d;
+    document.getElementById('offline').style.display = d.connected ? 'none' : 'block';
+    render(d.vars || {}, d.connected);
+  }catch(e){
+    document.getElementById('offline').style.display = 'block';
+    toast('Не удалось получить статус: ' + e.message, true);
+  }
+}
+
+async function runCmd(cmd){
+  if (cmd === 'test.battery.start' && !confirm('Запустить тест батареи? ИБП на несколько секунд перейдёт на питание от аккумулятора.')) return;
+  try{
+    const r = await api('cmd', { body: { cmd } });
+    toast(r.output || 'Команда выполнена');
+    setTimeout(load, 1500);
+  }catch(e){ toast('Ошибка: ' + e.message, true); }
+}
+
+// сетка графика
+(function(){
+  const g = document.getElementById('gridLines');
+  for (let i = 1; i < 4; i++){
+    const yy = 4 + i * 20.5;
+    g.innerHTML += '<line x1="0" y1="' + yy + '" x2="320" y2="' + yy + '" stroke="#1c2537" stroke-width="1"/>';
+  }
+})();
+
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

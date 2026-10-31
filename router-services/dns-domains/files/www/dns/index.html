@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Домены — управление</title>
+<style>
+  :root{
+    --bg:#0f1420; --card:#171e2e; --card2:#1e273a; --border:#2a3550;
+    --text:#e6ecf7; --muted:#8b98b3; --accent:#00d3a7; --accent2:#2f81f7;
+    --danger:#ff5572; --warn:#ffb020; --ok:#33d17a;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:radial-gradient(1200px 600px at 20% -10%,#1b2b45 0%,var(--bg) 55%);
+    color:var(--text); font:14px/1.5 -apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif;
+    min-height:100vh; padding:24px;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px}
+  header h1{font-size:22px;margin:0;letter-spacing:.3px}
+  header .logo{
+    width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));color:#05121f;font-weight:800;font-size:18px;
+  }
+  .badge{
+    padding:4px 11px;border-radius:999px;font-size:12px;border:1px solid var(--border);
+    background:var(--card);color:var(--muted);display:inline-flex;align-items:center;gap:6px;
+  }
+  .badge b{color:var(--text);font-weight:600}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:18px}
+  .card h2{margin:0 0 14px;font-size:15px;letter-spacing:.4px;text-transform:uppercase;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px;padding:8px 10px;border-bottom:1px solid var(--border)}
+  td{padding:8px 10px;border-bottom:1px solid rgba(42,53,80,.5);vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  input[type=text],input[type=password],select{
+    width:100%;padding:7px 10px;border-radius:9px;border:1px solid var(--border);
+    background:var(--card2);color:var(--text);font:inherit;outline:none;
+  }
+  input[type=text]:focus,input[type=password]:focus{border-color:var(--accent2)}
+  input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent);cursor:pointer}
+  .sub{display:flex;align-items:center;gap:4px;color:var(--muted);white-space:nowrap}
+  .sub input{min-width:92px}
+  button{
+    padding:9px 16px;border-radius:10px;border:1px solid var(--border);background:var(--card2);
+    color:var(--text);font:inherit;cursor:pointer;transition:.15s;
+  }
+  button:hover{border-color:var(--accent2)}
+  button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04121c;font-weight:700;border:none}
+  button.ghost{background:transparent}
+  button.danger{border-color:#5a2333;color:var(--danger);background:transparent}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .muted{color:var(--muted);font-size:12.5px}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--danger)}
+  #toast{
+    position:fixed;right:22px;bottom:22px;padding:12px 18px;border-radius:12px;
+    background:var(--card2);border:1px solid var(--border);box-shadow:0 12px 30px rgba(0,0,0,.45);
+    opacity:0;transform:translateY(10px);transition:.25s;pointer-events:none;max-width:520px;
+  }
+  #toast.show{opacity:1;transform:none}
+  #toast.ok{border-color:#1f6b4a} #toast.err{border-color:#7a2a3d}
+  code{background:var(--card2);padding:2px 6px;border-radius:6px;font-size:12.5px;color:#9ad1ff}
+  .hostpre{color:var(--muted);font-size:12px}
+  .tag{padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid var(--border);color:var(--muted)}
+  .tag.pub{border-color:#1f6b4a;color:var(--ok)}
+  .tag.lan{border-color:#5c4a17;color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">D</div>
+    <h1>Домены и доступ</h1>
+    <span class="badge">домен: <b id="baseName">—</b></span>
+    <span class="badge">внешний IP: <b id="wanIp">—</b></span>
+    <span class="badge">сертификат: <b id="certExp">—</b></span>
+  </header>
+
+  <div class="card">
+    <h2>Поддомены (маршрутизация через роутер)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:270px">Адрес</th>
+          <th>Назначение (host:port)</th>
+          <th style="width:110px">Извне</th>
+          <th style="width:100px">Вкл.</th>
+          <th style="width:120px">WebSocket</th>
+          <th style="width:60px"></th>
+        </tr>
+      </thead>
+      <tbody id="siteRows"></tbody>
+    </table>
+    <div class="row" style="margin-top:14px">
+      <button class="ghost" onclick="addSite()">+ Добавить поддомен</button>
+      <button class="primary" onclick="save()">Сохранить и применить</button>
+      <span class="muted" id="saveState"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>DNS в локальной сети</h2>
+    <label class="row" style="gap:10px">
+      <input type="checkbox" id="localDomain">
+      <span>Считать <code id="baseName2">домен</code> локальным доменом сети (устройства получают имена вида <code>hostname.<span id="baseName3">…</span></code>)</span>
+    </label>
+    <p class="muted" style="margin:10px 0 0">
+      Все поддомены из таблицы из локальной сети резолвятся в адрес роутера (<span id="listenIp">192.168.1.1</span>),
+      поэтому HTTPS-сертификат всегда валиден и адреса одинаковые дома и снаружи.
+      Если галочка выше включена, DHCP-домен для всех устройств меняется на этот домен.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>DuckDNS и сертификат</h2>
+    <div class="row">
+      <button onclick="syncIp()">Обновить IP в DuckDNS</button>
+      <button onclick="renewCert()">Перевыпустить сертификат</button>
+      <button class="ghost" onclick="loadCertLog()">Лог сертификата</button>
+      <span class="badge">токен: <b id="tokenState">—</b></span>
+    </div>
+    <p class="muted" style="margin:12px 0 0">
+      Wildcard <code>*.<span id="baseName4">…</span></code> в DuckDNS уже отдаётся автоматически —
+      отдельные поддомены создавать не нужно. Сертификат — Let's Encrypt (DNS-01).
+    </p>
+    <pre id="certLog" class="muted" style="display:none;white-space:pre-wrap;margin-top:12px;max-height:260px;overflow:auto"></pre>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+let state = { base:"himik1987.duckdns.org", listen_ip:"192.168.1.1", local_domain:false, sites:[] };
+
+const $ = id => document.getElementById(id);
+
+function toast(msg, kind){
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'show ' + (kind || '');
+  clearTimeout(t._t);
+  t._t = setTimeout(() => { t.className = ''; }, 4200);
+}
+
+async function api(qs, body){
+  const opt = body ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) } : {};
+  const r = await fetch('/cgi-bin/dnsadmin?' + qs, opt);
+  const j = await r.json().catch(() => ({ok:false, error:'bad json'}));
+  return j;
+}
+
+function fqdn(sub){ return sub ? sub + '.' + state.base : state.base; }
+
+function render(){
+  $('baseName').textContent = state.base;
+  $('baseName2').textContent = state.base;
+  $('baseName3').textContent = state.base;
+  $('baseName4').textContent = state.base;
+  $('listenIp').textContent = state.listen_ip;
+  $('localDomain').checked = !!state.local_domain;
+
+  const tb = $('siteRows');
+  tb.innerHTML = '';
+  state.sites.forEach((s, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>
+        <div class="sub">
+          <input type="text" value="${s.sub || ''}" placeholder="(корень)" oninput="state.sites[${i}].sub=this.value.trim(); updateHost(${i})">
+          <span>.${state.base}</span>
+        </div>
+        <div class="hostpre" id="host-${i}">${fqdn(s.sub)}</div>
+      </td>
+      <td><input type="text" value="${s.target || ''}" placeholder="http://192.168.1.10:80" oninput="state.sites[${i}].target=this.value.trim()"></td>
+      <td><input type="checkbox" ${s.public ? 'checked' : ''} onchange="state.sites[${i}].public=this.checked; renderTags()"></td>
+      <td><input type="checkbox" ${s.enabled !== false ? 'checked' : ''} onchange="state.sites[${i}].enabled=this.checked"></td>
+      <td><input type="checkbox" ${s.ws ? 'checked' : ''} onchange="state.sites[${i}].ws=this.checked"></td>
+      <td><button class="danger" onclick="delSite(${i})">✕</button></td>`;
+    tb.appendChild(tr);
+  });
+}
+
+function updateHost(i){
+  const el = document.getElementById('host-' + i);
+  if (el) el.textContent = fqdn(state.sites[i].sub);
+}
+
+function renderTags(){ /* зарезервировано */ }
+
+function addSite(){
+  state.sites.push({ sub:'', name:'', target:'http://192.168.1.10:80', public:true, enabled:true, ws:false, verify:false });
+  render();
+}
+
+function delSite(i){
+  state.sites.splice(i, 1);
+  render();
+}
+
+async function load(){
+  const j = await api('action=status');
+  if (!j.ok){ toast('Ошибка загрузки: ' + (j.error || '?'), 'err'); return; }
+  state = j.data;
+  state.local_domain = !!state.local_domain;
+  render();
+  $('wanIp').textContent = state.wan_ip || '—';
+  $('certExp').textContent = (state.cert && state.cert.enddate) || 'нет';
+  $('tokenState').textContent = state.token_set ? 'задан (файл)' : 'из acme.sh';
+}
+
+async function save(){
+  const payload = {
+    base: state.base,
+    listen_ip: state.listen_ip,
+    local_domain: $('localDomain').checked,
+    sites: state.sites
+  };
+  $('saveState').textContent = 'применяю…';
+  const j = await api('action=save', payload);
+  $('saveState').textContent = '';
+  if (j.ok){ toast('Применено: ' + (j.data && j.data.message || 'ok'), 'ok'); setTimeout(load, 400); }
+  else toast('Ошибка: ' + (j.error || '') + (j.detail ? ' — ' + j.detail : ''), 'err');
+}
+
+async function syncIp(){
+  toast('Обновляю IP в DuckDNS…');
+  const j = await api('action=sync-ip', {});
+  if (j.ok) toast('DuckDNS: ' + (j.data.result || 'ok'), 'ok');
+  else toast('Ошибка DuckDNS: ' + (j.error || ''), 'err');
+}
+
+async function renewCert(){
+  toast('Запускаю перевыпуск сертификата…');
+  const j = await api('action=renew-cert', {});
+  if (j.ok) toast('Сертификат выпускается, смотрите лог через минуту', 'ok');
+  else toast('Ошибка: ' + (j.error || ''), 'err');
+}
+
+async function loadCertLog(){
+  const j = await api('action=cert-log');
+  const el = $('certLog');
+  el.style.display = 'block';
+  el.textContent = j.ok ? (j.data.log || '(пусто)') : ('Ошибка: ' + j.error);
+}
+
+load();
+</script>
+</body>
+</html>
