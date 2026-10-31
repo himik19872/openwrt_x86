@@ -1,5 +1,12 @@
 #!/bin/sh
 # Отправка сообщения в Telegram: notify-tg "текст"
+# Устойчиво к нестабильному TLS до api.telegram.org (DPI/потери SYN):
+# несколько попыток, только IPv4, последние попытки — через рабочий IP.
+#
+# Переменные окружения:
+#   NOTIFY_TG_TRIES  — число попыток (по умолчанию 5)
+#   NOTIFY_TG_IP     — IP для принудительного --resolve (по умолчанию 149.154.167.220)
+
 S=/etc/netmon/settings.json
 [ -f "$S" ] || exit 1
 
@@ -12,17 +19,43 @@ CHAT=$(jq -r '.chat_id // empty' "$S" 2>/dev/null)
 MSG=$(printf '%s' "${1:-}" | cut -c1-3900)
 [ -n "$MSG" ] || exit 1
 
-RESP=$(curl -s --max-time 15 -w '\n%{http_code}' -X POST \
-    "https://api.telegram.org/bot${TOKEN}/sendMessage" \
-    --data-urlencode "chat_id=${CHAT}" \
-    --data-urlencode "text=${MSG}" 2>&1)
+URL="https://api.telegram.org/bot${TOKEN}/sendMessage"
+TRIES=${NOTIFY_TG_TRIES:-5}
+FALLBACK_IP=${NOTIFY_TG_IP:-149.154.167.220}
 
-CODE=$(printf '%s' "$RESP" | tail -n 1)
-BODY=$(printf '%s' "$RESP" | sed '$d')
+i=1
+last=""
+while [ "$i" -le "$TRIES" ]; do
+	if [ "$i" -ge 4 ] && [ -n "$FALLBACK_IP" ]; then
+		# принудительно рабочий IP: DNS может отдавать заблокированный адрес
+		RESP=$(curl -4 -sS --connect-timeout 5 --max-time 12 \
+			--resolve "api.telegram.org:443:${FALLBACK_IP}" \
+			-w '\n%{http_code}' -X POST "$URL" \
+			--data-urlencode "chat_id=${CHAT}" \
+			--data-urlencode "text=${MSG}" 2>&1)
+	else
+		RESP=$(curl -4 -sS --connect-timeout 5 --max-time 12 \
+			-w '\n%{http_code}' -X POST "$URL" \
+			--data-urlencode "chat_id=${CHAT}" \
+			--data-urlencode "text=${MSG}" 2>&1)
+	fi
 
-if [ "$CODE" = "200" ]; then
-    exit 0
-fi
-logger -t notify-tg "telegram error: HTTP ${CODE} ${BODY}"
-echo "$BODY"
+	CODE=$(printf '%s' "$RESP" | tail -n 1)
+	BODY=$(printf '%s' "$RESP" | sed '$d' | head -c 300)
+
+	[ "$CODE" = "200" ] && exit 0
+
+	last="HTTP ${CODE} ${BODY} (try ${i}/${TRIES})"
+
+	# 4xx — ошибка конфигурации (неверный токен/chat_id), повторять бессмысленно
+	case "$CODE" in
+		400 | 401 | 403 | 404) break ;;
+	esac
+
+	sleep 1
+	i=$((i + 1))
+done
+
+logger -t notify-tg "telegram send failed: ${last}"
+echo "$last"
 exit 1
