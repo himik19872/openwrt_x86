@@ -1,0 +1,15 @@
+#!/bin/sh
+# /usr/libexec/netmon-nets
+# Выводит IPv4-сети всех адресов br-lan (по одной в строке), например:
+#   192.168.1.0/24
+#   192.168.2.0/24
+# Используется netmon-scan и netmon-api, чтобы сканировать все подсети
+# локального бриджа (в т.ч. "сервисные" вроде 192.168.2.0/24 для камер).
+
+IF=${1:-br-lan}
+
+ip -4 -o addr show dev "$IF" 2>/dev/null | awk '{print $4}' | while read -r cidr; do
+	[ -n "$cidr" ] || continue
+	ipcalc.sh "$cidr" 2>/dev/null |
+		awk -F= '/^NETWORK=/{n=$2} /^PREFIX=/{p=$2} END {if (n != "") print n "/" p}'
+done | sort -u

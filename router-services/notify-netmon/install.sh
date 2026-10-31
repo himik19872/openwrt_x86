@@ -11,9 +11,10 @@ mkdir -p /www/notify /etc/netmon
 cp -f "$DIR/files/usr/libexec/netmon-api" /usr/libexec/netmon-api
 cp -f "$DIR/files/usr/libexec/netmon-check" /usr/libexec/netmon-check
 cp -f "$DIR/files/usr/libexec/netmon-scan" /usr/libexec/netmon-scan
+cp -f "$DIR/files/usr/libexec/netmon-nets" /usr/libexec/netmon-nets
 cp -f "$DIR/files/usr/libexec/notify-tg" /usr/libexec/notify-tg
 cp -f "$DIR/files/www/notify/index.html" /www/notify/index.html
-chmod +x /usr/libexec/netmon-api /usr/libexec/netmon-check /usr/libexec/netmon-scan /usr/libexec/notify-tg
+chmod +x /usr/libexec/netmon-api /usr/libexec/netmon-check /usr/libexec/netmon-scan /usr/libexec/netmon-nets /usr/libexec/notify-tg
 ln -sf /usr/libexec/netmon-api /www/cgi-bin/netmon
 
 echo "== [3/4] Данные =="

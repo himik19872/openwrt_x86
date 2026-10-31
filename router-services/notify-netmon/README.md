@@ -10,6 +10,33 @@
 - сканирование сети `arp-scan` каждые 5 минут с поиском новых устройств;
 - `/usr/libexec/notify-tg` — универсальный скрипт отправки (используется и NUT).
 
+## Сканирование нескольких подсетей
+
+`netmon-scan` и `netmon-api` сканируют **все IPv4-сети на `br-lan`** — список выдаёт `/usr/libexec/netmon-nets` (через `ipcalc.sh`).
+Поэтому сервисные подсети (например `192.168.2.0/24` — заводская сеть камер OpenIPC) автоматически
+попадают в мониторинг, и уведомления о новых устройствах приходят и оттуда.
+
+Чтобы добавить такую подсеть роутеру:
+
+```sh
+uci add_list network.lan.ipaddr='192.168.2.1/24'
+uci commit network
+reboot          # ⚠️ не `network reload`!
+```
+
+Доступ из LAN к такой сети делает MASQUERADE:
+
+```sh
+uci add firewall nat
+uci set firewall.@nat[-1].src='lan'
+uci set firewall.@nat[-1].dest_ip='192.168.2.0/24'
+uci set firewall.@nat[-1].target='MASQUERADE'
+uci commit firewall && fw4 reload
+```
+
+> ⚠️ `network reload` после изменения `network.lan.ipaddr` на этом железе роняет сеть (br-lan пересоздаётся,
+> Mellanox/igb не поднимаются) — применяйте перезагрузкой роутера.
+
 ## Надёжная доставка (важно)
 
 При активном DPI соединения к `api.telegram.org` нестабильны: часть SYN/TLS-сессий просто не устанавливается
@@ -38,6 +65,7 @@ sh install.sh
 files/usr/libexec/netmon-api   → /usr/libexec/netmon-api    (CGI-API + UI)
 files/usr/libexec/netmon-check → /usr/libexec/netmon-check  (ping-проверка, cron 1 мин)
 files/usr/libexec/netmon-scan  → /usr/libexec/netmon-scan   (arp-scan, cron 5 мин)
+files/usr/libexec/netmon-nets  → /usr/libexec/netmon-nets   (список подсетей br-lan)
 files/usr/libexec/notify-tg    → /usr/libexec/notify-tg     (отправка в Telegram)
 files/www/notify/index.html    → /www/notify/index.html
 /etc/netmon/settings.json      — токен, chat, устройства (root:nutmon 640)

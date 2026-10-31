@@ -12,13 +12,14 @@ NOTIFY=0
 
 [ -f "$SET" ] || exit 0
 
-BASEIP=$(uci -q get network.lan.ipaddr | cut -d/ -f1 | cut -d. -f1-3)
-[ -n "$BASEIP" ] || BASEIP=192.168.1
+# все IPv4-подсети на br-lan (например 192.168.1.0/24 и 192.168.2.0/24)
+NETS=$(/usr/libexec/netmon-nets 2>/dev/null)
+[ -n "$NETS" ] || NETS="192.168.1.0/24"
 
 : > /tmp/netmon-dev-cron.tsv
 
 if command -v arp-scan >/dev/null 2>&1; then
-    arp-scan --interface=br-lan --localnet --quiet --retry=2 --timeout=1000 2>/dev/null \
+    arp-scan --interface=br-lan --quiet --retry=2 --timeout=1000 $NETS 2>/dev/null \
         | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print $1"\t"tolower($2)}' \
         | while IFS="$(printf '\t')" read -r ip mac; do
             name=$(awk -v m="$mac" 'tolower($2)==m {print $4; exit}' /tmp/dhcp.leases 2>/dev/null)
@@ -26,10 +27,14 @@ if command -v arp-scan >/dev/null 2>&1; then
             printf '%s\t%s\tREACHABLE\t%s\n' "$ip" "$mac" "$name" >> /tmp/netmon-dev-cron.tsv
         done
 else
-    i=1
-    while [ "$i" -le 254 ]; do
-        arping -c 1 -w 1 -q -I br-lan "$BASEIP.$i" >/dev/null 2>&1 &
-        i=$((i + 1))
+    for net in $NETS; do
+        BASEIP=$(printf '%s' "$net" | cut -d/ -f1 | cut -d. -f1-3)
+        [ -n "$BASEIP" ] || continue
+        i=1
+        while [ "$i" -le 254 ]; do
+            arping -c 1 -w 1 -q -I br-lan "$BASEIP.$i" >/dev/null 2>&1 &
+            i=$((i + 1))
+        done
     done
     wait
     sleep 1
