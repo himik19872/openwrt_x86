@@ -352,6 +352,44 @@ for p in lan1 lan2 lan3 lan4 lan5 lan6 lan7 lan8; do
 Если порт не нужен — можно не включать его в `bridge-vlan`, тогда он не поднимается
 и калибровка для него не выполняется (минус ~5 с на порт).
 
+### 7.7 Вставили SFP-модуль после включения — линка нет
+
+Симптом: порт в `lowerlayerdown`, `carrier=0`, `Link detected: no`, хотя модуль виден
+по I2C (`ethtool -m lanN` отдаёт EEPROM) и кабель воткнут.
+
+Причина: режим порта выбирается **при загрузке**, по наличию и типу модуля
+(phylink + SFP-описание). Модуль, вставленный в работающий коммутатор, сам порт
+не переинициализирует.
+
+Лечение без перезагрузки (достаточно 1–2 секунд down):
+
+```sh
+for p in lan4 lan5; do ip link set $p down; sleep 1; ip link set $p up; done
+sleep 8
+for p in lan4 lan5; do echo "$p $(cat /sys/class/net/$p/operstate) $(cat /sys/class/net/$p/speed)"; done
+```
+
+В логе должно появиться:
+
+```
+lan5: PHY [smbus:sfp-p5:16] driver [Marvell 88E1111] (irq=POLL)
+lan5: Link is Up - 1Gbps/Full - flow control rx/tx
+```
+
+Если модули уже стоят — после `reboot` порты поднимаются сами, ничего делать не нужно.
+
+| Модуль | Режим порта | Скорость |
+|---|---|---|
+| 10G SFP+ (оптика/DAC/CR) | `inband/10gbase-r` | 10 Гбит/с |
+| медь 1000BASE-T (напр. ORIGO OFM712, внутри Marvell 88E1111) | `inband/sgmii` | 1 Гбит/с |
+
+Проверить, что за модуль стоит в порту:
+
+```sh
+ethtool -m lan4 | head -8      # EEPROM: вендор, P/N, скорость (12-й байт = 0x0d -> 1.3 ГБод = 1G)
+ethtool lan4 | grep -E "Supported link modes|Link detected"
+```
+
 ---
 
 ## Грабли, на которые мы наступили
