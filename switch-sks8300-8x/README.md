@@ -232,6 +232,98 @@ ssh root@192.168.1.54
 
 ---
 
+## Шаг 7. Базовая настройка: сеть, время, русский язык
+
+### 7.1 Сеть, имя, часовой пояс
+
+Штатный образ отдаёт только `lan` со статическим адресом — **шлюза и DNS нет**, поэтому нет
+ни обновлений пакетов, ни синхронизации времени:
+
+```sh
+uci set network.lan.gateway='192.168.1.1'
+uci -q delete network.lan.dns
+uci add_list network.lan.dns='192.168.1.1'
+uci add_list network.lan.dns='8.8.8.8'
+
+uci set system.@system[0].hostname='sw10g'
+uci set system.@system[0].description='XikeStor SKS8300-8X'
+uci set system.@system[0].timezone='MSK-3'
+uci set system.@system[0].zonename='Europe/Moscow'
+
+uci commit network; uci commit system
+reload_config      # применяет всё, сеть моргнёт на 2–3 секунды
+```
+
+Проверка:
+
+```sh
+ip route                    # default via 192.168.1.1 dev switch.1
+ping -c2 1.1.1.1
+cat /proc/sys/kernel/hostname
+```
+
+> ⚠️ В штатном образе busybox `ip` **не понимает `-4`/`-br`** — `ip -4 route` выдаст
+> «usage», а не ошибку маршрута. Используйте `ip route` / `ip addr show`.
+
+### 7.2 Время — до установки пакетов!
+
+После прошивки часы стоят на дате сборки (`Mar 3 2026`), из-за чего `apk update` падает
+с `wgetSSL verify error: unknown error` (сертификаты «из будущего»). Лечится так:
+
+```sh
+date -u -s '2026-11-04 11:18:56'      # один раз выставить вручную
+/etc/init.d/sysntpd enable
+/etc/init.d/sysntpd restart           # дальше время держит busybox ntpd
+date
+```
+
+### 7.3 Русский язык LuCI
+
+```sh
+apk update
+apk add luci-i18n-base-ru luci-i18n-firewall-ru \
+        luci-i18n-package-manager-ru luci-i18n-attendedsysupgrade-ru \
+        zoneinfo-core zoneinfo-europe
+uci set luci.main.lang='ru'
+uci commit luci
+```
+
+`zoneinfo-core` + `zoneinfo-europe` нужны, чтобы в LuCI → Система корректно отображался
+и выбирался часовой пояс (без них список зон пустой). Перезагрузка не требуется —
+интерфейс сразу на русском (меню «Статус / Система / Сеть», «Интерфейсы», «Межсетевой экран»).
+Занято на оверлее после установки: **~1 МБ из 19.4 МБ**.
+
+### 7.4 Имя в DNS роутера
+
+Чтобы коммутатор пинговался как `sw10g.lan`, на роутере (192.168.1.1):
+
+```sh
+uci set dhcp.sw10g='domain'
+uci set dhcp.sw10g.name='sw10g'
+uci set dhcp.sw10g.ip='192.168.1.54'
+uci add_list dhcp.sw10g.name='sw10g.lan'
+uci commit dhcp
+/etc/init.d/dnsmasq reload
+```
+
+### 7.5 Бэкап конфигурации
+
+```sh
+sysupgrade -b /tmp/backup-sw10g.tar.gz     # 8 КБ, 31 файл
+```
+
+Забрать на ПК:
+
+```sh
+# в образе нет sftp-server, поэтому pscp/scp не работают — забираем через base64
+apk add coreutils-base64
+base64 /tmp/backup-sw10g.tar.gz > /tmp/b64.txt      # затем скачать и раскодировать локально
+```
+
+Восстановить: `sysupgrade -r backup-sw10g.tar.gz`.
+
+---
+
 ## Грабли, на которые мы наступили
 
 | Проблема | Решение |
