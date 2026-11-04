@@ -245,7 +245,24 @@ sh traccar/install.sh && sh dns-domains/install.sh && sh common/install.sh
 
 ---
 
-## 🚀 TODO / Планы
+## � Прошивка 10G-коммутатора в OpenWrt
+
+Проверенная инструкция по замене заводской прошивки на **OpenWrt 25.12.0** у 10G-коммутаторов
+на Realtek RTL9303:
+
+📁 **[`switch-sks8300-8x/`](switch-sks8300-8x/README.md)**
+
+| Что внутри | |
+|---|---|
+| Модели | XikeStor SKS8300-8X = ONTi ONT-S508CL-8S = JT-COM JT-FG6700-8TFM = Hicomdata HK-ES3058-8P-L |
+| SoC | Realtek RTL9303 rev B, 8× SFP+ 10G, 512 МБ RAM, 32 МБ NOR |
+| Способ | U-Boot → `Ctrl+B` → `Ctrl+F` (пароль `diagshell_unipoe_env`) → `debug_unish_env` → TFTP initramfs → sysupgrade |
+| Скрипты | посимвольная отправка в консоль, авто-вход в U-Boot, спам `Ctrl+B`, лог консоли |
+| Дополнительно | бэкап заводской прошивки, откат через U-Boot, разбор «грабель» (switch.1, нет tftp-клиента, конфликт 192.168.1.1) |
+
+---
+
+## �🚀 TODO / Планы
 
 - [ ] Видео-запись звонков (захват RTP H264)
 - [ ] Группы звонков (Ring Groups) через веб-интерфейс
