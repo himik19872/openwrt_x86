@@ -390,6 +390,74 @@ ethtool -m lan4 | head -8      # EEPROM: вендор, P/N, скорость (12
 ethtool lan4 | grep -E "Supported link modes|Link detected"
 ```
 
+Лучший признак — состояние SFP в debugfs:
+
+```sh
+cat /sys/kernel/debug/sfp-p4/state
+# Module state: present        <- модуль есть
+# Module state: empty          <- пусто
+```
+
+---
+
+## Шаг 8. Автоподъём портов при замене модуля на ходу (`sfp-watchdog`)
+
+Чтобы не бегать в консоль после каждой перестановки SFP, на коммутатор ставится
+маленький сторож: он находит порты «модуль есть, линка нет» и делает им `down/up`.
+
+Файлы: [`files/sfp-watchdog`](files/sfp-watchdog), [`files/sfp-watchdog.init`](files/sfp-watchdog.init)
+
+### Установка
+
+```sh
+# 1. залить файлы (на роутере/ПК, где есть scp/pscp/pipe)
+cat files/sfp-watchdog      > /usr/bin/sfp-watchdog
+cat files/sfp-watchdog.init > /etc/init.d/sfp-watchdog
+
+# 2. ОБЯЗАТЕЛЬНО убрать CR — иначе получите «: not found» и «/etc/rc.common: not found»
+sed -i 's/\r$//' /usr/bin/sfp-watchdog /etc/init.d/sfp-watchdog
+
+# 3. права, проверка синтаксиса, автозапуск
+chmod +x /usr/bin/sfp-watchdog /etc/init.d/sfp-watchdog
+sh -n /usr/bin/sfp-watchdog && echo OK
+/etc/init.d/sfp-watchdog enable
+/etc/init.d/sfp-watchdog start
+```
+
+### Как работает
+
+| Что | Как |
+|---|---|
+| «модуль есть?» | `grep -qs "Module state: present" /sys/kernel/debug/sfp-pN/state` (debugfs монтируется сам, при необходимости — из скрипта) |
+| «линка нет?» | `cat /sys/class/net/lanN/carrier` = 0 |
+| действие | `ip link set lanN down; sleep 1; ip link set lanN up` |
+| период опроса | 15 с (первая проверка — через 100 с после старта, чтобы не мешать загрузке) |
+| backoff | попытки: 1–3 каждые ~35 с, затем каждые 2 мин, затем каждые 10 мин |
+| порт с живым линком | не трогается вообще |
+
+### Ресурсы
+
+Один процесс `ash`: **0 % CPU, ~1.5 МБ RSS** (из 507 МБ), одно пробуждение в 15 с
+и 8 чтений крошечных файлов из sysfs. Нагрузки не создаёт.
+
+### Проверка
+
+```sh
+logread | grep sfp-watchdog
+# user.notice sfp-watchdog: порт lan8: модуль есть, линка нет — переинициализация (попытка 1)
+
+for p in lan1 lan4 lan5 lan8; do
+  printf "%s carrier=%s speed=%s\n" $p $(cat /sys/class/net/$p/carrier) "$(cat /sys/class/net/$p/speed)"; done
+```
+
+### Выключить
+
+```sh
+/etc/init.d/sfp-watchdog stop
+/etc/init.d/sfp-watchdog disable
+rm -f /usr/bin/sfp-watchdog /etc/init.d/sfp-watchdog
+```
+
 ---
 
 ## Грабли, на которые мы наступили

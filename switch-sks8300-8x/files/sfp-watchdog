@@ -1,0 +1,73 @@
+#!/bin/sh
+# sfp-watchdog — автоподъём портов при горячей замене SFP-модуля.
+#
+# Драйвер rtl83xx выбирает режим порта (sgmii / 10gbase-r) при инициализации.
+# Если модуль вставили в уже работающий коммутатор, порт остаётся без линка,
+# пока не сделать down/up. Скрипт раз в 15 с ищет порты «модуль есть, carrier=0»
+# и переинициализирует их с нарастающим интервалом (20 с → 120 с → 600 с),
+# чтобы не крутить калибровку SerDes бесконечно на порту без кабеля.
+#
+# Порты с живым линком не трогаются вообще.
+
+PORTS="1 2 3 4 5 6 7 8"
+INTERVAL=15   # период опроса, с
+STATE=/tmp/sfp-watchdog
+
+# признак наличия модуля читается из debugfs
+if [ ! -r /sys/kernel/debug/sfp-p1/state ]; then
+	mount -t debugfs none /sys/kernel/debug 2>/dev/null
+fi
+
+mkdir -p "$STATE"
+uptime_s() { cut -d. -f1 /proc/uptime; }
+
+check_port() {
+	n="$1"
+	dev="lan$n"
+	[ -e "/sys/class/net/$dev/carrier" ] || return 0
+
+	# модуля нет — сбрасываем счётчики
+	if ! grep -qs "Module state: present" "/sys/kernel/debug/sfp-p$n/state"; then
+		rm -f "$STATE/$n.att" "$STATE/$n.fail"
+		return 0
+	fi
+
+	# линк есть — не вмешиваемся
+	if [ "$(cat "/sys/class/net/$dev/carrier" 2>/dev/null)" = "1" ]; then
+		rm -f "$STATE/$n.att" "$STATE/$n.fail"
+		return 0
+	fi
+
+	fails=$(cat "$STATE/$n.fail" 2>/dev/null)
+	[ -n "$fails" ] || fails=0
+	last=$(cat "$STATE/$n.att" 2>/dev/null)
+	[ -n "$last" ] || last=0
+
+	if [ "$fails" -ge 6 ]; then
+		wait=600
+	elif [ "$fails" -ge 3 ]; then
+		wait=120
+	else
+		wait=20
+	fi
+
+	now=$(uptime_s)
+	[ $((now - last)) -lt "$wait" ] && return 0
+
+	logger -t sfp-watchdog "порт $dev: модуль есть, линка нет — переинициализация (попытка $((fails + 1)))"
+	ip link set "$dev" down 2>/dev/null
+	sleep 1
+	ip link set "$dev" up 2>/dev/null
+	echo "$now" >"$STATE/$n.att"
+	echo $((fails + 1)) >"$STATE/$n.fail"
+}
+
+# дать коммутатору завершить загрузку (~100 с на калибровку всех портов)
+sleep 100
+
+while :; do
+	for n in $PORTS; do
+		check_port "$n"
+	done
+	sleep "$INTERVAL"
+done
